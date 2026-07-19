@@ -16,6 +16,13 @@ if (MOCK_MODE) {
 }
 // --------------------------------------------------------------------------
 
+// All business hours and bookings are interpreted in this fixed timezone,
+// REGARDLESS of what timezone the server itself happens to run in (e.g.
+// Railway's containers run in UTC, but Windsor, Ontario is Eastern time).
+// Without this, "5pm" from a customer would get stored as 5pm UTC and
+// display 4-5 hours off once viewed in Calendar or the app.
+const BUSINESS_TIMEZONE = "America/Toronto"; // Windsor, ON shares this zone
+
 function loadCredentials() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!raw) {
@@ -47,20 +54,105 @@ function getCalendarClient() {
   return calendarClient;
 }
 
+// ---- Timezone-safe date helpers ------------------------------------------
+// These exist so date/time math never depends on the server's own local
+// timezone (which can differ between your Mac, Railway, or anywhere else
+// this ends up running) — everything is explicitly anchored to
+// BUSINESS_TIMEZONE instead.
+
+/** True if a datetime string already carries an explicit UTC offset ("Z" or "+hh:mm"). */
+function hasExplicitOffset(str) {
+  return /Z$|[+-]\d{2}:\d{2}$/.test(str);
+}
+
+/** Splits a plain "YYYY-MM-DDTHH:mm:ss" string into its literal number parts. No timezone math. */
+function parseWallClock(str) {
+  const clean = str.replace("Z", "");
+  const [datePart, timePart = "00:00:00"] = clean.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute, second = 0] = timePart.split(":").map(Number);
+  return { year, month, day, hour, minute, second };
+}
+
+/** Day of week (0=Sun..6=Sat) for a calendar date, independent of any timezone. */
+function weekdayOf({ year, month, day }) {
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+/** Breaks a real Date instant into its wall-clock components AS SEEN in `timeZone`. */
+function getZonedParts(date, timeZone) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = dtf.formatToParts(date).reduce((acc, p) => {
+    if (p.type !== "literal") acc[p.type] = Number(p.value);
+    return acc;
+  }, {});
+  return parts;
+}
+
 /**
- * Returns true if the given local datetime range falls within the
- * business's configured hours.
+ * Converts a wall-clock string (e.g. "2026-07-22T17:00:00", no offset)
+ * that represents a moment in `timeZone` into the correct absolute UTC
+ * Date. This is what lets "5pm" from the AI/customer become the right
+ * real-world instant, whatever the server's own timezone is.
+ */
+function zonedTimeToUtc(wallClockStr, timeZone) {
+  const wall = parseWallClock(wallClockStr);
+  const utcGuess = Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second);
+  const zonedAsIfUtc = getZonedParts(new Date(utcGuess), timeZone);
+  const zonedGuessAsUtc = Date.UTC(
+    zonedAsIfUtc.year,
+    zonedAsIfUtc.month - 1,
+    zonedAsIfUtc.day,
+    zonedAsIfUtc.hour,
+    zonedAsIfUtc.minute,
+    zonedAsIfUtc.second
+  );
+  const offset = zonedGuessAsUtc - utcGuess;
+  return new Date(utcGuess - offset);
+}
+
+/** Converts either an absolute (has "Z"/offset) or wall-clock string into a true UTC Date. */
+function toUtcDate(str, timeZone) {
+  return hasExplicitOffset(str) ? new Date(str) : zonedTimeToUtc(str, timeZone);
+}
+
+/** Gets the business-local calendar parts (year/month/day/hour/minute) for either kind of string. */
+function toLocalParts(str, timeZone) {
+  return hasExplicitOffset(str) ? getZonedParts(new Date(str), timeZone) : parseWallClock(str);
+}
+
+/**
+ * For sending to the Google Calendar events.insert API: if we already
+ * have an absolute instant (has "Z"/offset), pass it through unchanged.
+ * If it's a bare wall-clock string, pair it with an explicit timeZone so
+ * Google interprets the numbers as local time in that zone rather than UTC.
+ */
+function toGoogleEventDateTime(str, timeZone) {
+  if (hasExplicitOffset(str)) return { dateTime: str };
+  return { dateTime: str, timeZone };
+}
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the given datetime range falls within the business's
+ * configured hours, correctly accounting for the business's real timezone.
  */
 function isWithinBusinessHours(startISO, endISO, business) {
-  const start = new Date(startISO);
-  const end = new Date(endISO);
+  const start = toLocalParts(startISO, BUSINESS_TIMEZONE);
+  const end = toLocalParts(endISO, BUSINESS_TIMEZONE);
 
-  if (start.getDay() === business.closed_day || end.getDay() === business.closed_day) return false;
-  if (start.getHours() < business.open_hour) return false;
-  if (
-    end.getHours() > business.close_hour ||
-    (end.getHours() === business.close_hour && end.getMinutes() > 0)
-  ) {
+  if (weekdayOf(start) === business.closed_day || weekdayOf(end) === business.closed_day) return false;
+  if (start.hour < business.open_hour) return false;
+  if (end.hour > business.close_hour || (end.hour === business.close_hour && end.minute > 0)) {
     return false;
   }
   return true;
@@ -73,10 +165,13 @@ async function isSlotFree(startISO, endISO, business) {
   if (MOCK_MODE) return true;
 
   const calendar = getCalendarClient();
+  const startUtc = toUtcDate(startISO, BUSINESS_TIMEZONE);
+  const endUtc = toUtcDate(endISO, BUSINESS_TIMEZONE);
+
   const res = await calendar.freebusy.query({
     requestBody: {
-      timeMin: new Date(startISO).toISOString(),
-      timeMax: new Date(endISO).toISOString(),
+      timeMin: startUtc.toISOString(),
+      timeMax: endUtc.toISOString(),
       items: [{ id: business.google_calendar_id }],
     },
   });
@@ -87,23 +182,30 @@ async function isSlotFree(startISO, endISO, business) {
 /**
  * Given a date (YYYY-MM-DD), return 1-hour candidate windows within this
  * business's hours, each flagged free or busy against their calendar.
+ * All hours are interpreted in BUSINESS_TIMEZONE regardless of server TZ.
  */
 async function getAvailabilityForDate(dateStr, business) {
-  const day = new Date(`${dateStr}T12:00:00`).getDay();
-  if (day === business.closed_day) {
+  const dateParts = parseWallClock(`${dateStr}T00:00:00`);
+  if (weekdayOf(dateParts) === business.closed_day) {
     return { open: false, reason: "Closed that day", slots: [] };
   }
 
-  const buildSlots = (busyRanges) => {
+  const buildSlots = (busyRangesUtc) => {
     const slots = [];
     for (let hour = business.open_hour; hour < business.close_hour; hour++) {
-      const slotStart = new Date(`${dateStr}T${String(hour).padStart(2, "0")}:00:00`);
-      const slotEnd = new Date(`${dateStr}T${String(hour + 1).padStart(2, "0")}:00:00`);
-      const overlaps = busyRanges.some((b) => slotStart < b.end && slotEnd > b.start);
+      const slotStartLocal = `${dateStr}T${String(hour).padStart(2, "0")}:00:00`;
+      const slotEndLocal = `${dateStr}T${String(hour + 1).padStart(2, "0")}:00:00`;
+      const slotStartUtc = zonedTimeToUtc(slotStartLocal, BUSINESS_TIMEZONE);
+      const slotEndUtc = zonedTimeToUtc(slotEndLocal, BUSINESS_TIMEZONE);
+      const overlaps = busyRangesUtc.some((b) => slotStartUtc < b.end && slotEndUtc > b.start);
+
+      const hour12 = ((hour + 11) % 12) + 1;
+      const ampm = hour < 12 ? "AM" : "PM";
+
       slots.push({
-        start: slotStart.toISOString(),
-        end: slotEnd.toISOString(),
-        label: slotStart.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+        start: slotStartUtc.toISOString(),
+        end: slotEndUtc.toISOString(),
+        label: `${hour12}:00 ${ampm}`,
         free: !overlaps,
       });
     }
@@ -115,13 +217,13 @@ async function getAvailabilityForDate(dateStr, business) {
   }
 
   const calendar = getCalendarClient();
-  const dayStart = new Date(`${dateStr}T00:00:00`);
-  const dayEnd = new Date(`${dateStr}T23:59:59`);
+  const dayStartUtc = zonedTimeToUtc(`${dateStr}T00:00:00`, BUSINESS_TIMEZONE);
+  const dayEndUtc = zonedTimeToUtc(`${dateStr}T23:59:59`, BUSINESS_TIMEZONE);
 
   const res = await calendar.freebusy.query({
     requestBody: {
-      timeMin: dayStart.toISOString(),
-      timeMax: dayEnd.toISOString(),
+      timeMin: dayStartUtc.toISOString(),
+      timeMax: dayEndUtc.toISOString(),
       items: [{ id: business.google_calendar_id }],
     },
   });
@@ -169,8 +271,8 @@ async function createBookingEvent({
     ]
       .filter(Boolean)
       .join("\n"),
-    start: { dateTime: startISO },
-    end: { dateTime: endISO },
+    start: toGoogleEventDateTime(startISO, BUSINESS_TIMEZONE),
+    end: toGoogleEventDateTime(endISO, BUSINESS_TIMEZONE),
     // NOTE: deliberately NOT including an "attendees" field. Basic service
     // account keys (without Google Workspace domain-wide delegation) are
     // forbidden from adding attendees to an event at all — Google throws
