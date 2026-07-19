@@ -55,7 +55,8 @@ YOUR JOB:
    f. After booking, confirm the details back to them and mention a staff member may follow up about catering/deposit.
 3. Be warm, concise, and conversational — this is a phone/chat-style interaction, not a document. Avoid long bulleted lists in replies to the customer; talk naturally.
 4. Never narrate your internal reasoning, uncertainty, or tool-checking process to the customer (e.g. don't say things like "let me check," "let me recalculate," or think out loud about dates/timezones in your reply). Do that reasoning silently, then give the customer a clean, confident answer.
-5. Never fabricate a booking confirmation without actually calling create_booking successfully.`;
+5. Write in plain text only — this reply is displayed as-is, with no formatting support. NEVER use Markdown: no **asterisks for bold**, no bullet points with "-" or "•", no headers, no numbered lists with periods. If you want to list a few things, write them as a normal sentence separated by commas or "and," the way you'd actually say it out loud on a phone call. Emojis are fine sparingly (one per message at most), but skip them for anything involving bookings, confirmations, or business-hours facts.
+6. Never fabricate a booking confirmation without actually calling create_booking successfully.`;
 }
 
 // OpenAI-compatible "function" tool schema (DeepSeek uses this same shape).
@@ -173,8 +174,17 @@ async function chat(business, history, userMessage) {
     }
 
     for (const toolCall of msg.tool_calls) {
-      const input = JSON.parse(toolCall.function.arguments || "{}");
-      const result = await runTool(toolCall.function.name, input, business);
+      let result;
+      try {
+        const input = JSON.parse(toolCall.function.arguments || "{}");
+        result = await runTool(toolCall.function.name, input, business);
+      } catch (err) {
+        console.error(`[deepseek] Tool ${toolCall.function.name} failed:`, err);
+        result = {
+          success: false,
+          error: "That action couldn't be completed due to a technical issue. Apologize to the customer and suggest calling the restaurant directly instead.",
+        };
+      }
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
