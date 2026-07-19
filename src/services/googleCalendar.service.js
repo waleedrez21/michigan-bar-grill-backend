@@ -171,17 +171,17 @@ async function createBookingEvent({
       .join("\n"),
     start: { dateTime: startISO },
     end: { dateTime: endISO },
-    ...(customerEmail ? { attendees: [{ email: customerEmail }] } : {}),
+    // NOTE: deliberately NOT including an "attendees" field. Basic service
+    // account keys (without Google Workspace domain-wide delegation) are
+    // forbidden from adding attendees to an event at all — Google throws
+    // "forbiddenForServiceAccounts" even with sendUpdates:"none". The
+    // customer's email is still recorded in the description above and in
+    // our own database, just not as a calendar invite.
   };
 
   const res = await calendar.events.insert({
     calendarId: business.google_calendar_id,
     requestBody: event,
-    // Basic service account keys (without Google Workspace domain-wide
-    // delegation) are NOT allowed to send email invites to attendees —
-    // Google's API throws if sendUpdates is anything but "none" here.
-    // The booking still gets created either way; the customer just won't
-    // get an automatic Google Calendar email invite.
     sendUpdates: "none",
   });
 
