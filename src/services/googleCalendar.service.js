@@ -1,5 +1,21 @@
 const { google } = require("googleapis");
 
+// ---- Mock mode ----------------------------------------------------------
+// Set MOCK_CALENDAR=true in .env to bypass real Google Calendar entirely.
+// Every slot reports as free, and "creating a booking" just fabricates an
+// event ID instead of calling Google. This lets you test the full chat ->
+// booking -> SQLite -> app flow before Google Calendar is set up.
+// Remove MOCK_CALENDAR from .env (or set it to false) once real Calendar
+// credentials are in place — mock mode ignores the real calendar entirely,
+// so two people could "book" the same slot without it noticing.
+const MOCK_MODE = process.env.MOCK_CALENDAR === "true";
+if (MOCK_MODE) {
+  console.warn(
+    "[googleCalendar] MOCK_CALENDAR=true — using fake availability/bookings, NOT real Google Calendar."
+  );
+}
+// --------------------------------------------------------------------------
+
 function loadCredentials() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!raw) {
@@ -54,6 +70,8 @@ function isWithinBusinessHours(startISO, endISO, business) {
  * Check whether a business's calendar is free for the given window.
  */
 async function isSlotFree(startISO, endISO, business) {
+  if (MOCK_MODE) return true;
+
   const calendar = getCalendarClient();
   const res = await calendar.freebusy.query({
     requestBody: {
@@ -76,6 +94,26 @@ async function getAvailabilityForDate(dateStr, business) {
     return { open: false, reason: "Closed that day", slots: [] };
   }
 
+  const buildSlots = (busyRanges) => {
+    const slots = [];
+    for (let hour = business.open_hour; hour < business.close_hour; hour++) {
+      const slotStart = new Date(`${dateStr}T${String(hour).padStart(2, "0")}:00:00`);
+      const slotEnd = new Date(`${dateStr}T${String(hour + 1).padStart(2, "0")}:00:00`);
+      const overlaps = busyRanges.some((b) => slotStart < b.end && slotEnd > b.start);
+      slots.push({
+        start: slotStart.toISOString(),
+        end: slotEnd.toISOString(),
+        label: slotStart.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+        free: !overlaps,
+      });
+    }
+    return slots;
+  };
+
+  if (MOCK_MODE) {
+    return { open: true, slots: buildSlots([]) }; // everything free
+  }
+
   const calendar = getCalendarClient();
   const dayStart = new Date(`${dateStr}T00:00:00`);
   const dayEnd = new Date(`${dateStr}T23:59:59`);
@@ -92,20 +130,7 @@ async function getAvailabilityForDate(dateStr, business) {
     end: new Date(b.end),
   }));
 
-  const slots = [];
-  for (let hour = business.open_hour; hour < business.close_hour; hour++) {
-    const slotStart = new Date(`${dateStr}T${String(hour).padStart(2, "0")}:00:00`);
-    const slotEnd = new Date(`${dateStr}T${String(hour + 1).padStart(2, "0")}:00:00`);
-    const overlaps = busyRanges.some((b) => slotStart < b.end && slotEnd > b.start);
-    slots.push({
-      start: slotStart.toISOString(),
-      end: slotEnd.toISOString(),
-      label: slotStart.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
-      free: !overlaps,
-    });
-  }
-
-  return { open: true, slots };
+  return { open: true, slots: buildSlots(busyRanges) };
 }
 
 /**
@@ -123,6 +148,13 @@ async function createBookingEvent({
   endISO,
   notes,
 }) {
+  if (MOCK_MODE) {
+    return {
+      id: "mock_" + Date.now(),
+      htmlLink: "https://calendar.google.com/mock-event-not-real",
+    };
+  }
+
   const calendar = getCalendarClient();
 
   const event = {
@@ -145,13 +177,20 @@ async function createBookingEvent({
   const res = await calendar.events.insert({
     calendarId: business.google_calendar_id,
     requestBody: event,
-    sendUpdates: customerEmail ? "all" : "none",
+    // Basic service account keys (without Google Workspace domain-wide
+    // delegation) are NOT allowed to send email invites to attendees —
+    // Google's API throws if sendUpdates is anything but "none" here.
+    // The booking still gets created either way; the customer just won't
+    // get an automatic Google Calendar email invite.
+    sendUpdates: "none",
   });
 
   return res.data; // includes res.data.id (google_event_id) and htmlLink
 }
 
 async function cancelBookingEvent(googleEventId, business) {
+  if (MOCK_MODE) return;
+
   const calendar = getCalendarClient();
   await calendar.events.delete({ calendarId: business.google_calendar_id, eventId: googleEventId });
 }
