@@ -15,10 +15,10 @@ async function postMessage(req, res, next) {
     if (!sessionId) sessionId = uuidv4();
 
     const history = sessionsRepo.getHistory(sessionId, business.id);
-    const { history: updatedHistory, reply } = await agentService.chat(business, history, message);
+    const { history: updatedHistory, reply, cartActions } = await agentService.chat(business, history, message);
     sessionsRepo.saveHistory(sessionId, business.id, updatedHistory);
 
-    res.json({ sessionId, reply });
+    res.json({ sessionId, reply, cartActions: cartActions || [] });
   } catch (err) {
     next(err);
   }

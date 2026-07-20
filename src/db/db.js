@@ -59,6 +59,33 @@ db.exec(`
     history_json TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- One row per online order (cart checked out via Stripe). Separate from
+  -- bookings/banquet hall reservations — this is for food orders.
+  CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id TEXT NOT NULL REFERENCES businesses(id),
+    stripe_session_id TEXT UNIQUE,
+    customer_name TEXT,
+    customer_email TEXT,
+    customer_phone TEXT,
+    items_json TEXT NOT NULL,     -- [{ id, name, price, quantity }, ...]
+    subtotal_cents INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'paid' | 'completed' | 'cancelled'
+    source TEXT DEFAULT 'agent',  -- 'agent' | 'website'
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_orders_business ON orders(business_id);
 `);
+
+// ---- Migrations for columns added after initial release ----
+// better-sqlite3 has no "ADD COLUMN IF NOT EXISTS", so we check first.
+function columnExists(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+if (!columnExists("businesses", "menu_items_json")) {
+  db.exec(`ALTER TABLE businesses ADD COLUMN menu_items_json TEXT NOT NULL DEFAULT '[]'`);
+}
 
 module.exports = db;

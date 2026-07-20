@@ -8,10 +8,10 @@ function getById(id) {
   return db.prepare(`SELECT * FROM businesses WHERE id = ?`).get(id);
 }
 
-function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo }) {
+function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo, menuItems }) {
   db.prepare(`
-    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json)
-    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson)
+    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json, menu_items_json)
+    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson, @menuItemsJson)
   `).run({
     id,
     name,
@@ -21,6 +21,7 @@ function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, close
     closeHour: closeHour ?? 20,
     closedDay: closedDay ?? 1,
     restaurantInfoJson: JSON.stringify(restaurantInfo),
+    menuItemsJson: JSON.stringify(menuItems || []),
   });
   return getById(id);
 }
@@ -29,9 +30,14 @@ function listAll() {
   return db.prepare(`SELECT id, name, google_calendar_id, created_at FROM businesses`).all();
 }
 
+function updateMenuItems(id, menuItems) {
+  db.prepare(`UPDATE businesses SET menu_items_json = ? WHERE id = ?`).run(JSON.stringify(menuItems), id);
+  return getById(id);
+}
+
 /** Parses the stored JSON blob back into a usable object. */
 function parsedInfo(business) {
   return JSON.parse(business.restaurant_info_json);
 }
 
-module.exports = { getByApiKey, getById, create, listAll, parsedInfo };
+module.exports = { getByApiKey, getById, create, listAll, parsedInfo, updateMenuItems };
