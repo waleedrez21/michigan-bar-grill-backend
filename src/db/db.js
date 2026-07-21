@@ -89,10 +89,11 @@ if (!columnExists("businesses", "menu_items_json")) {
 }
 if (!columnExists("businesses", "code")) {
   // Short human-friendly signup/login code (e.g. "MBG-4821"), separate
-  // from the internal `id` slug. Nullable + UNIQUE so existing rows
-  // (created before self-serve signup existed) aren't broken by this
-  // migration — only new signups populate it.
-  db.exec(`ALTER TABLE businesses ADD COLUMN code TEXT UNIQUE`);
+  // from the internal `id` slug. SQLite does NOT allow ADD COLUMN ...
+  // UNIQUE directly, so we add a plain column here and enforce
+  // uniqueness with a separate index below instead.
+  db.exec(`ALTER TABLE businesses ADD COLUMN code TEXT`);
 }
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_businesses_code ON businesses(code)`);
 
 module.exports = db;
