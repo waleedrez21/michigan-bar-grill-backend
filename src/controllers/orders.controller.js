@@ -72,4 +72,34 @@ function completeOrder(req, res, next) {
   }
 }
 
+/**
+ * GET /api/orders/by-session/:sessionId
+ * Used by the order-success.html page after Stripe redirects back — looks
+ * up the order that was just paid for, so the page can show a real
+ * summary instead of a generic "thanks!" message.
+ */
+function getBySession(req, res, next) {
+  try {
+    const order = ordersRepo.getByStripeSessionId(req.params.sessionId);
+
+    // Scope check: never return an order that belongs to a different
+    // business, even if someone guesses/reuses a session id.
+    if (!order || order.business_id !== req.business.id) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    res.json({
+      id: order.id,
+      customerName: order.customer_name,
+      customerPhone: order.customer_phone,
+      items: JSON.parse(order.items_json),
+      subtotal: order.subtotal_cents / 100,
+      status: order.status,
+      createdAt: order.created_at,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = { getMenu, postCheckout, listOrders, completeOrder, getBySession };
