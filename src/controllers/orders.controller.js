@@ -72,4 +72,4 @@ function completeOrder(req, res, next) {
   }
 }
 
-module.exports = { getMenu, postCheckout, listOrders, completeOrder };
+module.exports = { getMenu, postCheckout, listOrders, completeOrder, getBySession };
