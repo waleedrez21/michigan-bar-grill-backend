@@ -87,5 +87,12 @@ function columnExists(table, column) {
 if (!columnExists("businesses", "menu_items_json")) {
   db.exec(`ALTER TABLE businesses ADD COLUMN menu_items_json TEXT NOT NULL DEFAULT '[]'`);
 }
+if (!columnExists("businesses", "code")) {
+  // Short human-friendly signup/login code (e.g. "MBG-4821"), separate
+  // from the internal `id` slug. Nullable + UNIQUE so existing rows
+  // (created before self-serve signup existed) aren't broken by this
+  // migration — only new signups populate it.
+  db.exec(`ALTER TABLE businesses ADD COLUMN code TEXT UNIQUE`);
+}
 
 module.exports = db;

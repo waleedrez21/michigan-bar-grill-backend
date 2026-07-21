@@ -8,10 +8,16 @@ function getById(id) {
   return db.prepare(`SELECT * FROM businesses WHERE id = ?`).get(id);
 }
 
-function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo, menuItems }) {
+/** Used by the app's login screen — looks up a business by its short
+ *  human-facing signup code (e.g. "MBG-4821"), not the internal id/slug. */
+function getByCode(code) {
+  return db.prepare(`SELECT * FROM businesses WHERE code = ?`).get(code);
+}
+
+function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo, menuItems, code }) {
   db.prepare(`
-    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json, menu_items_json)
-    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson, @menuItemsJson)
+    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json, menu_items_json, code)
+    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson, @menuItemsJson, @code)
   `).run({
     id,
     name,
@@ -22,6 +28,7 @@ function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, close
     closedDay: closedDay ?? 1,
     restaurantInfoJson: JSON.stringify(restaurantInfo),
     menuItemsJson: JSON.stringify(menuItems || []),
+    code: code || null,
   });
   return getById(id);
 }
@@ -40,4 +47,4 @@ function parsedInfo(business) {
   return JSON.parse(business.restaurant_info_json);
 }
 
-module.exports = { getByApiKey, getById, create, listAll, parsedInfo, updateMenuItems };
+module.exports = { getByApiKey, getById, getByCode, create, listAll, parsedInfo, updateMenuItems };

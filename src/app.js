@@ -5,6 +5,7 @@ const morgan = require("morgan");
 
 const chatRoutes = require("./routes/chat.routes");
 const bookingRoutes = require("./routes/booking.routes");
+const businessesRoutes = require("./routes/businesses.routes");
 const contactRoutes = require("./routes/contact.routes");
 const ordersRoutes = require("./routes/orders.routes");
 const { handleStripeWebhook } = require("./controllers/stripeWebhook.controller");
@@ -43,6 +44,7 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/orders", ordersRoutes);
+app.use("/api/businesses", businessesRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 app.use(errorHandler);
