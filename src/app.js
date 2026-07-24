@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 
 const verificationRoutes = require("./routes/verification.routes");
+const authRoutes = require("./routes/auth.routes");
 const chatRoutes = require("./routes/chat.routes");
 const bookingRoutes = require("./routes/booking.routes");
 const businessesRoutes = require("./routes/businesses.routes");
@@ -47,6 +48,7 @@ app.use("/api/contact", contactRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/businesses", businessesRoutes);
 app.use("/api/verification", verificationRoutes);
+app.use("/api/auth", authRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 app.use(errorHandler);
