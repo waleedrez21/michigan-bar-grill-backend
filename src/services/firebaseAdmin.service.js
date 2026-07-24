@@ -1,9 +1,8 @@
-const admin = require("firebase-admin");
-
-let initialized = false;
+const { initializeApp, cert, getApps } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 
 function ensureInitialized() {
-  if (initialized) return;
+  if (getApps().length > 0) return;
 
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (!raw) {
@@ -11,17 +10,17 @@ function ensureInitialized() {
   }
 
   const serviceAccount = JSON.parse(raw);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
+  initializeApp({
+    credential: cert(serviceAccount),
   });
-  initialized = true;
 }
 
 /** Updates a Firebase user's password by their email address. */
 async function updatePasswordByEmail(email, newPassword) {
   ensureInitialized();
-  const user = await admin.auth().getUserByEmail(email);
-  await admin.auth().updateUser(user.uid, { password: newPassword });
+  const auth = getAuth();
+  const user = await auth.getUserByEmail(email);
+  await auth.updateUser(user.uid, { password: newPassword });
 }
 
 module.exports = { updatePasswordByEmail };
