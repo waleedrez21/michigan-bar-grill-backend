@@ -31,4 +31,21 @@ async function sendContactNotification({ name, email, phone, reason, message }) 
   return { sent: true };
 }
 
-module.exports = { sendContactNotification, isConfigured };
+async function sendVerificationCode({ email, code }) {
+  if (!isConfigured()) {
+    console.log("[email] SMTP not configured — skipping send. Code was still generated:", code);
+    return { sent: false };
+  }
+
+  const transporter = getTransporter();
+  await transporter.sendMail({
+    from: `"Work Bay" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: `Your Work Bay verification code: ${code}`,
+    text: `Your verification code is ${code}. It expires in 10 minutes.\n\nIf you didn't request this, you can ignore this email.`,
+  });
+
+  return { sent: true };
+}
+
+module.exports = { sendContactNotification, sendVerificationCode, isConfigured };

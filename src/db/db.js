@@ -96,4 +96,21 @@ if (!columnExists("businesses", "code")) {
 }
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_businesses_code ON businesses(code)`);
 
+// Verification codes for confirming an email address belongs to the
+// person signing up, BEFORE their real Firebase account gets created.
+// Not scoped to a business — this happens before any business exists
+// for this person.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS verification_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    code TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    verified INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_verification_codes_email ON verification_codes(email);
+`);
+
 module.exports = db;
