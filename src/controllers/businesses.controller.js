@@ -1,6 +1,11 @@
 const crypto = require("crypto");
 const businessesRepo = require("../db/businessesRepo");
 
+const BUSINESS_TYPES = [
+  "Restaurant", "Barbershop", "Nail Salon", "HVAC",
+  "Exterior Cleaning", "Auto Detailing",
+];
+
 function generateApiKey() {
   return "biz_" + crypto.randomBytes(24).toString("hex");
 }
@@ -49,9 +54,16 @@ function defaultRestaurantInfo(name) {
  */
 async function postSignup(req, res, next) {
   try {
-    const { businessName } = req.body;
+    const { businessName, businessType } = req.body;
     if (!businessName || typeof businessName !== "string" || !businessName.trim()) {
       return res.status(400).json({ error: "`businessName` (string) is required." });
+    }
+
+    // Optional for older app versions; supplied values must match the iOS types.
+    if (businessType != null && !BUSINESS_TYPES.includes(businessType)) {
+      return res.status(400).json({
+        error: "`businessType` must be one of: " + BUSINESS_TYPES.join(", ") + ".",
+      });
     }
 
     let code = req.body.code;
@@ -72,12 +84,14 @@ async function postSignup(req, res, next) {
       googleCalendarId: "", // not yet configured — set up later via settings
       restaurantInfo: defaultRestaurantInfo(businessName.trim()),
       menuItems: [],
+      businessType,
       code,
     });
 
     res.status(201).json({
       businessId: business.id,
       businessName: business.name,
+      businessType: business.business_type ?? null,
       apiKey: business.api_key,
       code: business.code,
     });
@@ -105,6 +119,7 @@ async function getByCode(req, res, next) {
     res.json({
       businessId: business.id,
       businessName: business.name,
+      businessType: business.business_type ?? null,
       apiKey: business.api_key,
       code: business.code,
     });
