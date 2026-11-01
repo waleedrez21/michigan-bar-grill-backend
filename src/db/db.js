@@ -94,6 +94,9 @@ if (!columnExists("businesses", "code")) {
   // uniqueness with a separate index below instead.
   db.exec(`ALTER TABLE businesses ADD COLUMN code TEXT`);
 }
+if (!columnExists("businesses", "business_type")) {
+  db.exec(`ALTER TABLE businesses ADD COLUMN business_type TEXT`);
+}
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_businesses_code ON businesses(code)`);
 
 // Verification codes for confirming an email address belongs to the

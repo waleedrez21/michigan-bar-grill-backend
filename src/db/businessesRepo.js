@@ -14,10 +14,10 @@ function getByCode(code) {
   return db.prepare(`SELECT * FROM businesses WHERE code = ?`).get(code);
 }
 
-function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo, menuItems, code }) {
+function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, closedDay, restaurantInfo, menuItems, code, businessType }) {
   db.prepare(`
-    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json, menu_items_json, code)
-    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson, @menuItemsJson, @code)
+    INSERT INTO businesses (id, name, api_key, google_calendar_id, open_hour, close_hour, closed_day, restaurant_info_json, menu_items_json, code, business_type)
+    VALUES (@id, @name, @apiKey, @googleCalendarId, @openHour, @closeHour, @closedDay, @restaurantInfoJson, @menuItemsJson, @code, @businessType)
   `).run({
     id,
     name,
@@ -29,6 +29,7 @@ function create({ id, name, apiKey, googleCalendarId, openHour, closeHour, close
     restaurantInfoJson: JSON.stringify(restaurantInfo),
     menuItemsJson: JSON.stringify(menuItems || []),
     code: code || null,
+    businessType: businessType ?? null,
   });
   return getById(id);
 }
