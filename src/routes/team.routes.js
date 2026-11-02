@@ -94,7 +94,20 @@ router.patch('/team/:businessId/members/:uid/booking-settings', (req,res) => {
   if(!target) return res.status(404).json({error:'Member not found.'});
   const person=profile(req.params.uid);
   if(req.body.acceptsBookings && (!person.firstName.trim() || !person.lastName.trim())) return res.status(422).json({error:'This member must save their first and last name in Profile before taking appointments.'});
+  if(req.body.acceptsBookings && !require('../services/workerAvailability.service').get(req.params.businessId,req.params.uid).weekly.some(day=>day.intervals.length)) return res.status(422).json({error:'This member must save working hours in My availability before taking appointments.'});
   db.prepare('UPDATE business_members SET accepts_bookings=? WHERE business_id=? AND uid=?').run(req.body.acceptsBookings?1:0,req.params.businessId,req.params.uid);
   res.json({success:true});
+});
+router.get('/team/:businessId/me/availability',(req,res,next)=>{
+  try{res.json(require('../services/workerAvailability.service').get(req.params.businessId,req.user.uid));}catch(error){next(error);}
+});
+router.put('/team/:businessId/me/availability',(req,res,next)=>{
+  try{res.json(require('../services/workerAvailability.service').save(req.params.businessId,req.user.uid,req.body));}catch(error){next(error);}
+});
+router.post('/team/:businessId/bookings/:id/respond',async(req,res,next)=>{
+  try{
+    if(!/^\d+$/.test(req.params.id))return res.status(400).json({error:'Invalid appointment ID.'});
+    res.json(await require('../services/bookingLifecycle.service').respond(businesses.getById(req.params.businessId),req.user.uid,Number(req.params.id),req.body.decision));
+  }catch(error){next(error);}
 });
 module.exports = router;

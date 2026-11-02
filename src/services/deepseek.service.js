@@ -38,10 +38,10 @@ Business facts: address ${info.address}; phone ${info.phone}; hours ${info.hours
 This business books appointments with individual workers, not a banquet hall. Do not offer food ordering.
 Use list_workers to retrieve real workers; never invent staff names or IDs. Ask whether the customer wants a specific worker or has no preference.
 When a worker is requested, pass workerName exactly as the customer requested to check_availability and create_booking; resolve the exact workerUid from list_workers too. If several workers share a name, ask for the full name. Never silently substitute another worker.
-For no preference, omit workerUid and workerName and the server selects an available worker. Tell the customer who was assigned from the successful tool result.
-Collect the customer's name, phone or email, desired date, start time and duration/end time. Ask what service they want and store it in notes; do not invent service lengths or prices.
+For no preference, omit workerUid and workerName and the server selects an available worker. Tell the customer which worker received the request from the successful tool result.
+Collect the customer's name, email address for status updates, desired date, start time and duration/end time. Phone is optional. Ask what service they want and store it in notes; do not invent service lengths or prices.
 Always call check_availability before offering a time. Its slots are one-hour windows; when booking a different duration, the server checks the entire requested interval again.
-Use returned labels as local business times. Only call create_booking after the customer agrees to the appointment details and worker preference. Never claim confirmation unless success=true. If the requested worker is unavailable, offer another time or ask permission to choose another worker.
+Use returned labels as local business times. Only call create_booking after the customer agrees to the appointment details and worker preference. A success=true result with status=pending_worker means a REQUEST, not a confirmed appointment. Tell the customer it awaits worker acceptance, mention the response deadline in business local time, and that they will receive email updates. Only status=confirmed is a confirmed appointment. Never claim a pending request is confirmed. If the requested worker is unavailable, offer another time or ask permission to choose another worker.
 Be concise, friendly and use plain text. Do not expose internal tool IDs or narrate internal reasoning.`;
   }
   return `You are the reservations, ordering & information assistant for ${business.name}.
@@ -112,7 +112,7 @@ const tools = [
     function: {
       name: "create_booking",
       description:
-        "Create a confirmed appointment or banquet hall booking. Only call this after the customer has confirmed a specific date and time that was verified as free via check_availability, and you have their name plus phone or email.",
+        "Create an appointment request awaiting worker acceptance, or a confirmed restaurant banquet booking. Only call this after the customer has confirmed a specific date and time that was verified as free via check_availability, and you have their name and contact information. Appointment businesses require email for status updates.",
       parameters: {
         type: "object",
         properties: {

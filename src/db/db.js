@@ -152,3 +152,21 @@ if (!columnExists('bookings', 'worker_name')) {
   db.exec('ALTER TABLE bookings ADD COLUMN worker_name TEXT');
 }
 db.exec('CREATE INDEX IF NOT EXISTS idx_bookings_worker ON bookings(business_id, worker_uid, status)');
+
+if (!columnExists('bookings', 'response_deadline')) db.exec('ALTER TABLE bookings ADD COLUMN response_deadline TEXT');
+if (!columnExists('bookings', 'responded_at')) db.exec('ALTER TABLE bookings ADD COLUMN responded_at TEXT');
+if (!columnExists('bookings', 'status_token')) db.exec('ALTER TABLE bookings ADD COLUMN status_token TEXT');
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_status_token ON bookings(status_token);
+  CREATE TABLE IF NOT EXISTS worker_availability (
+    business_id TEXT NOT NULL, uid TEXT NOT NULL,
+    weekly_json TEXT NOT NULL DEFAULT '[]', time_off_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(business_id,uid)
+  );
+  CREATE TABLE IF NOT EXISTS booking_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER NOT NULL,
+    event TEXT NOT NULL, recipient TEXT NOT NULL, sent_at TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
+    UNIQUE(booking_id,event,recipient)
+  );
+`);

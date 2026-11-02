@@ -74,7 +74,8 @@ function listBookings(req, res, next) {
     const team = req.query.scope === 'team';
     if(team && membership.role !== 'manager' && membership.role !== 'assistant_manager') return res.status(403).json({error:'Only managers can view the team schedule.'});
     if(req.query.workerUid && !(team && ['manager','assistant_manager'].includes(membership.role)) && req.query.workerUid !== req.user.uid) return res.status(403).json({error:'You can only view your own appointments.'});
-    let rows=bookingsRepo.listBookings(req.business.id).filter(row=>!['cancelled','failed'].includes(row.status) && (team || row.status === 'confirmed'));
+    require('../services/bookingLifecycle.service').expire();
+    let rows=bookingsRepo.listBookings(req.business.id).filter(row=>!['cancelled','failed'].includes(row.status) && (team || ['confirmed','pending_worker'].includes(row.status)));
     if(!team) rows=rows.filter(row=>row.worker_uid === req.user.uid);
     else if(req.query.workerUid) rows=rows.filter(row=>row.worker_uid === req.query.workerUid);
     rows.sort((a,b)=>workerBookings.instant(a.start_time)-workerBookings.instant(b.start_time));

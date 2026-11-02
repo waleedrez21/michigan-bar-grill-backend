@@ -1,5 +1,7 @@
 const db = require('../db/db');
 const calendar = require('./googleCalendar.service');
+const hours=require('./workerAvailability.service');
+const lifecycle=require('./bookingLifecycle.service');
 const staffBusiness = business => Boolean(business.business_type && business.business_type !== 'Restaurant');
 function fail(status, message) { const e = new Error(message);e.status = status;e.publicMessage = message;throw e; }
 function instant(value) {
@@ -42,9 +44,11 @@ function choosePool(business, {workerUid,workerName} = {}) {
   return pool;
 }
 function localFree(businessId, workerUid, from, to) {
+  lifecycle.expire();
+  if(!hours.available(businessId,workerUid,from,to))return false;
   // Unassigned legacy appointments reserve the entire shop until assigned.
   const rows = db.prepare(`SELECT start_time,end_time FROM bookings WHERE business_id=?
-    AND status NOT IN ('cancelled','failed') AND (worker_uid=? OR worker_uid IS NULL)`).all(businessId,workerUid);
+    AND status NOT IN ('cancelled','failed','declined','expired') AND (worker_uid=? OR worker_uid IS NULL)`).all(businessId,workerUid);
   return !rows.some(row => instant(row.start_time) < to && instant(row.end_time) > from);
 }
 async function availability(date, business, preference = {}) {
@@ -67,13 +71,15 @@ async function availability(date, business, preference = {}) {
   return {open:true,slots,workers:pool};
 }
 async function create(business, input, source = 'agent') {
+  if(typeof input.customerEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.customerEmail) || input.customerEmail.length>254) fail(400,'An email address is required for appointment status updates.');
   if (typeof input.customerName !== 'string' || !input.customerName.trim()) fail(400,'Customer name is required.');
   const [from,to] = window(input.startDateTime,input.endDateTime,business);
+  if(from<=Date.now())fail(422,'Choose an appointment in the future.');
   const pool = choosePool(business,input);
   // Balance no-preference bookings using assigned appointments on that local day.
   const date = new Intl.DateTimeFormat('en-CA',{timeZone:calendar.BUSINESS_TIMEZONE,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(from));
   const dayStart=instant(date+'T00:00:00'),dayEnd=instant(date+'T23:59:59');
-  const count = uid => db.prepare("SELECT start_time FROM bookings WHERE business_id=? AND worker_uid=? AND status NOT IN ('cancelled','failed')").all(business.id,uid).filter(row => {const t=instant(row.start_time);return t>=dayStart && t<=dayEnd;}).length;
+  const count = uid => db.prepare("SELECT start_time FROM bookings WHERE business_id=? AND worker_uid=? AND status NOT IN ('cancelled','failed','declined','expired')").all(business.id,uid).filter(row => {const t=instant(row.start_time);return t>=dayStart && t<=dayEnd;}).length;
   pool.sort((a,b)=>count(a.uid)-count(b.uid) || a.uid.localeCompare(b.uid));
   for (const worker of pool) {
     if(!localFree(business.id,worker.uid,from,to) || !await calendar.isWorkerSlotFree(input.startDateTime,input.endDateTime,business,worker.uid)) continue;
@@ -82,26 +88,17 @@ async function create(business, input, source = 'agent') {
     const reservation = db.transaction(() => {
       const enabled = workers(business.id).some(w=>w.uid===worker.uid);
       if(!enabled || !localFree(business.id,worker.uid,from,to)) return null;
-      return db.prepare(`INSERT INTO bookings (business_id,customer_name,customer_email,customer_phone,party_size,start_time,end_time,notes,source,status,worker_uid,worker_name)
-        VALUES (?,?,?,?,?,?,?,?,?,'pending_calendar',?,?)`).run(business.id,input.customerName.trim(),input.customerEmail||null,input.customerPhone||null,input.partySize||null,new Date(from).toISOString(),new Date(to).toISOString(),input.notes||null,source,worker.uid,worker.name).lastInsertRowid;
+      const start=new Date(from).toISOString();
+      const token=lifecycle.token(),deadline=lifecycle.responseDeadline(start);
+      const id=Number(db.prepare(`INSERT INTO bookings (business_id,customer_name,customer_email,customer_phone,party_size,start_time,end_time,notes,source,status,worker_uid,worker_name,response_deadline,status_token)
+        VALUES (?,?,?,?,?,?,?,?,?,'pending_worker',?,?,?,?)`).run(business.id,input.customerName.trim(),input.customerEmail.trim(),input.customerPhone||null,input.partySize||null,start,new Date(to).toISOString(),input.notes||null,source,worker.uid,worker.name,deadline,token).lastInsertRowid);
+      lifecycle.enqueue(id,'requested');
+      return {id,token,deadline};
     })();
     if(!reservation) continue;
-    const id=Number(reservation);
-    // App bookings can function without a linked Google Calendar. With a
-    // calendar, uncertain failures keep the reservation blocked for review.
-    if(!business.google_calendar_id) {
-      db.prepare("UPDATE bookings SET status='confirmed' WHERE id=?").run(id);
-      return {success:true,id,workerUid:worker.uid,workerName:worker.name,googleEventId:null,htmlLink:null};
-    }
-    try {
-      const event = await calendar.createBookingEvent({business,customerName:input.customerName,customerEmail:input.customerEmail,
-        customerPhone:input.customerPhone,partySize:input.partySize,startISO:input.startDateTime,endISO:input.endDateTime,notes:input.notes,workerUid:worker.uid,workerName:worker.name});
-      db.prepare("UPDATE bookings SET google_event_id=?,status='confirmed' WHERE id=?").run(event.id,id);
-      return {success:true,id,workerUid:worker.uid,workerName:worker.name,googleEventId:event.id,htmlLink:event.htmlLink||null};
-    } catch(error) {
-      db.prepare("UPDATE bookings SET status='calendar_review' WHERE id=?").run(id);
-      fail(503,'The appointment could not be confirmed with the calendar. Please contact the business before retrying.');
-    }
+    return {success:true,id:reservation.id,status:'pending_worker',confirmationRequired:true,
+      responseDeadline:reservation.deadline,statusToken:reservation.token,workerUid:worker.uid,workerName:worker.name,
+      googleEventId:null,htmlLink:null,message:'Request received. This appointment is awaiting worker acceptance and is not confirmed.'};
   }
   fail(409,input.workerUid || input.workerName ? 'That worker is unavailable at that time. Offer another time or ask before choosing another worker.' : 'No worker is available at that time. Please choose another time.');
 }

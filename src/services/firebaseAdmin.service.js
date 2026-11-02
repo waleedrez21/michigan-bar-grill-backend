@@ -33,4 +33,8 @@ async function legacyMemberships(businessId) {
   const snapshot = await getFirestore().collection('memberships').where('businessId', '==', businessId).get();
   return snapshot.docs.map(doc => doc.data());
 }
-module.exports = { updatePasswordByEmail, verifyIdToken, legacyMemberships };
+async function userEmail(uid) {
+  ensureInitialized();
+  return (await getAuth().getUser(uid)).email;
+}
+module.exports = { updatePasswordByEmail, verifyIdToken, legacyMemberships, userEmail };

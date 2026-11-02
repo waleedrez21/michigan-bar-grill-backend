@@ -11,6 +11,8 @@ calendar.isWorkerSlotFree=async()=>true;
 calendar.createBookingEvent=async()=>{await new Promise(resolve=>setTimeout(resolve,10));return {id:'event-'+Math.random(),htmlLink:'https://example.test/event'};};
 require('../src/services/firebaseAdmin.service').verifyIdToken=async uid=>({uid});
 const service=require('../src/services/workerBooking.service');
+const lifecycle=require('../src/services/bookingLifecycle.service');
+const hours=require('../src/services/workerAvailability.service');
 const {runTool}=require('../src/services/deepseek.service');
 const express=require('express');
 const app=express();app.use(express.json());
@@ -21,8 +23,9 @@ function business(id){return businesses.create({id,name:id,apiKey:id,googleCalen
 function worker(b,uid,first,last,role='employee',enabled=1){
  db.prepare('INSERT OR IGNORE INTO user_profiles (uid,first_name,last_name) VALUES (?,?,?)').run(uid,first,last);
  db.prepare('INSERT INTO business_members (business_id,uid,role,accepts_bookings) VALUES (?,?,?,?)').run(b.id,uid,role,enabled);
+ hours.save(b.id,uid,{weekly:Array.from({length:7},(_,weekday)=>({weekday,intervals:[{start:'09:00',end:'20:00'}]})),timeOff:[]});
 }
-const input=(hour=10,other={})=>({customerName:'Customer',customerPhone:'5551234567',startDateTime:`2026-11-03T${hour}:00:00`,endDateTime:`2026-11-03T${hour+1}:00:00`,...other});
+const input=(hour=10,other={})=>({customerName:'Customer',customerEmail:'customer@example.test',customerPhone:'5551234567',startDateTime:`2030-11-05T${hour}:00:00`,endDateTime:`2030-11-05T${hour+1}:00:00`,...other});
 test('worker-specific bookings, conflicts, automatic assignment, assistant tools and authorization',async()=>{
  const b=business('shop'),other=business('other');
  worker(b,'alex','Alex','Smith');worker(b,'sam','Sam','Lee');worker(b,'manager','Boss','Owner','manager',0);
@@ -47,13 +50,13 @@ test('worker-specific bookings, conflicts, automatic assignment, assistant tools
   await assert.rejects(service.create(b,input(11,{workerUid:'other-worker'})),e=>e.status===422);
   await assert.rejects(service.create(b,input(11,{workerUid:'sam',workerName:'Alex Smith'})),e=>e.status===422);
   // Adjacent is free; partial overlaps and long windows are rejected.
-  await assert.rejects(service.create(b,input(10,{workerUid:'alex',startDateTime:'2026-11-03T10:30:00',endDateTime:'2026-11-03T11:30:00'})),e=>e.status===409);
+  await assert.rejects(service.create(b,input(10,{workerUid:'alex',startDateTime:'2030-11-05T10:30:00',endDateTime:'2030-11-05T11:30:00'})),e=>e.status===409);
   const adjacent=await service.create(b,input(11,{workerUid:'alex'}));assert.equal(adjacent.workerUid,'alex');
-  await assert.rejects(service.create(b,input(11,{workerUid:'alex',endDateTime:'2026-11-03T10:00:00'})),e=>e.status===422);
+  await assert.rejects(service.create(b,input(11,{workerUid:'alex',endDateTime:'2030-11-05T10:00:00'})),e=>e.status===422);
   await assert.rejects(service.create(b,input(11,{workerUid:'alex',startDateTime:'2026-02-30T11:00:00'})),e=>e.status===400);
   // Equivalent offset timestamps still conflict with the local appointment.
-  await assert.rejects(service.create(b,input(10,{workerUid:'alex',startDateTime:'2026-11-03T15:00:00Z',endDateTime:'2026-11-03T16:00:00Z'})),e=>e.status===409);
-  const available=await service.availability('2026-11-03',b,{workerUid:'sam'});
+  await assert.rejects(service.create(b,input(10,{workerUid:'alex',startDateTime:'2030-11-05T15:00:00Z',endDateTime:'2030-11-05T16:00:00Z'})),e=>e.status===409);
+  const available=await service.availability('2030-11-05',b,{workerUid:'sam'});
   assert.equal(available.slots.find(s=>s.label==='10:00 AM').free,false);
   assert.equal(available.slots.find(s=>s.label==='11:00 AM').free,true);
   await assert.rejects(service.availability('2026-02-30',b),e=>e.status===400);
@@ -81,8 +84,10 @@ test('worker-specific bookings, conflicts, automatic assignment, assistant tools
   const web=await req('/api/bookings',null,'POST',input(15,{workerUid:'sam'}));assert.equal(web.status,201);assert.equal((await web.json()).workerUid,'sam');
   // Calendar uncertainty is never confirmed and still blocks the interval.
   calendar.createBookingEvent=async()=>{throw new Error('Calendar timeout');};
-  await assert.rejects(service.create(b,input(16,{workerUid:'sam'})),e=>e.status===503);
-  assert.equal(db.prepare("SELECT status FROM bookings WHERE worker_uid='sam' AND start_time='2026-11-03T21:00:00.000Z'").get().status,'calendar_review');
+  const waiting=await service.create(b,input(16,{workerUid:'sam'}));
+  assert.equal(waiting.status,'pending_worker');
+  await assert.rejects(lifecycle.respond(b,'sam',waiting.id,'accept'),e=>e.status===503);
+  assert.equal(db.prepare("SELECT status FROM bookings WHERE worker_uid='sam' AND start_time='2030-11-05T21:00:00.000Z'").get().status,'calendar_review');
   await assert.rejects(service.create(b,input(16,{workerUid:'sam'})),e=>e.status===409);
   // Unlinked shops still receive real, assigned app bookings.
   const unlinked={...b,google_calendar_id:''};
