@@ -8,8 +8,8 @@ router.use(resolveBusiness);
 
 router.get("/menu", getMenu);
 router.post("/checkout", postCheckout);
-router.get("/", listOrders);
-router.post("/:id/complete", completeOrder);
+router.get("/", require("../middleware/firebaseUser"), require("../middleware/businessMember"), listOrders);
+router.post("/:id/complete", require("../middleware/firebaseUser"), require("../middleware/businessMember"), completeOrder);
 router.get("/by-session/:sessionId", getBySession);
 
 module.exports = router;

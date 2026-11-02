@@ -37,7 +37,11 @@ test('ownership, team isolation, role permissions and shared profiles', async ()
     assert.equal(db.prepare('SELECT creator_uid FROM businesses WHERE id=?').get(business.businessId).creator_uid,'creator');
     const team = `/team/${business.businessId}/members`;
     assert.equal((await request(team,'outsider')).status,403);
-    assert.equal((await request('/team/join','employee','POST',{code:business.code.toLowerCase()})).status,200);
+    assert.equal((await request('/team/join','employee','POST',{code:business.code.toLowerCase()})).status,202);
+    assert.equal((await request(team,'employee')).status,403);
+    assert.deepEqual(await (await request('/me/businesses','employee')).json(),[]);
+    assert.equal((await request(`/team/${business.businessId}/join-requests/employee`,'outsider','POST',{decision:'approve'})).status,403);
+    assert.equal((await request(`/team/${business.businessId}/join-requests/employee`,'creator','POST',{decision:'approve'})).status,200);
     assert.equal((await (await request('/team/join','employee','POST',{code:business.code,role:'manager'})).json()).role,'employee');
     assert.equal((await request(`${team}/employee/role`,'employee','PATCH',{role:'manager'})).status,403);
     assert.equal((await request(`${team}/outsider/role`,'creator','PATCH',{role:'manager'})).status,404);
@@ -60,7 +64,7 @@ test('ownership, team isolation, role permissions and shared profiles', async ()
       {uid:'creator',code:business.code,role:'employee'}
     ] : [];
     const imported = await (await request(team,'creator')).json();
-    assert.equal(imported.find(row => row.uid === 'legacy-user').role,'employee');
+    assert.equal(imported.find(row => row.uid === 'legacy-user'),undefined);
     assert.equal(imported.find(row => row.uid === 'creator').role,'manager');
     assert.equal((await (await request('/me/businesses','employee')).json())[0].role,'assistant_manager');
     assert.equal((await request(`${team}/employee/role`,'creator','PATCH',{role:'manager'})).status,200);

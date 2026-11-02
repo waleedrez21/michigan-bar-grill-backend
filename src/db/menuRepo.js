@@ -27,6 +27,7 @@ function resolveCartItems(business, requestedItems) {
   const invalid = [];
 
   for (const req of requestedItems) {
+    if(!req || typeof req.id!=='string' || !Number.isInteger(req.quantity) || req.quantity<1 || req.quantity>99){ invalid.push({reason:'Choose an item and a quantity from 1 to 99'});continue; }
     const menuItem = menu.find((m) => m.id === req.id);
     const quantity = Math.max(1, parseInt(req.quantity, 10) || 1);
     if (!menuItem) {

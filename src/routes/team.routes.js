@@ -22,6 +22,16 @@ router.post('/me/push-tokens',(req,res)=>{
   db.prepare('INSERT INTO push_tokens(token,uid,updated_at) VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET uid=excluded.uid,updated_at=excluded.updated_at').run(token,req.user.uid,new Date().toISOString());res.json({success:true});
 });
 router.delete('/me/push-tokens',(req,res)=>{db.prepare('DELETE FROM push_tokens WHERE token=? AND uid=?').run(typeof req.body.token==='string'?req.body.token:'',req.user.uid);res.json({success:true});});
+router.post('/me/verify-email',async(req,res,next)=>{
+ try{
+  if(typeof req.body.verificationToken!=='string'||!req.user.email)return res.status(400).json({error:'Email verification proof required.'});
+  const hash=require('node:crypto').createHash('sha256').update(req.body.verificationToken).digest('hex');
+  const grant=db.prepare('SELECT * FROM email_verification_grants WHERE token_hash=? AND email=? AND expires_at>?').get(hash,req.user.email.toLowerCase().trim(),new Date().toISOString());
+  if(!grant)return res.status(400).json({error:'Email verification expired. Request a new code.'});
+  db.prepare('DELETE FROM email_verification_grants WHERE token_hash=?').run(hash);
+  await firebase.markEmailVerified(req.user.uid);res.json({success:true});
+ }catch(error){next(error);}
+});
 router.get('/me/profile', (req, res) => res.json(profile(req.user.uid)));
 router.put('/me/profile', (req, res) => {
   const values = {};
@@ -40,31 +50,65 @@ router.get('/me/businesses', (req, res) => {
   const rows = db.prepare(`SELECT b.*, m.role FROM businesses b JOIN business_members m ON m.business_id=b.id WHERE m.uid=? ORDER BY b.name`).all(req.user.uid);
   res.json(rows.map(b => businessJSON(b, b.role)));
 });
-router.post('/team/join', (req, res) => {
+router.post('/team/join', require('../middleware/securityLimits').join, (req, res) => {
   if (typeof req.body.code !== 'string') return res.status(400).json({ error: 'A business code is required.' });
   const b = businesses.getByCode(req.body.code.trim().toUpperCase());
   if (!b) return res.status(404).json({ error: 'No business found with that code.' });
-  // Rejoining must never overwrite an existing manager or assistant role.
-  db.prepare("INSERT OR IGNORE INTO business_members (business_id, uid, role) VALUES (?, ?, 'employee')").run(b.id, req.user.uid);
-  res.json(businessJSON(b, member(b.id, req.user.uid).role));
+  const existing = member(b.id, req.user.uid);
+  if (existing) return res.json(businessJSON(b, existing.role));
+  db.prepare("INSERT INTO join_requests(business_id,uid,status) VALUES(?,?,'pending') ON CONFLICT(business_id,uid) DO NOTHING").run(b.id,req.user.uid);
+  const request = db.prepare('SELECT status FROM join_requests WHERE business_id=? AND uid=?').get(b.id,req.user.uid);
+  if(request.status === 'rejected') return res.status(403).json({error:'Your request was declined. Ask the business manager to invite you again.'});
+  res.status(202).json({businessId:b.id,businessName:b.name,businessType:b.business_type||'',code:b.code,apiKey:'',pendingApproval:true});
+});
+router.get('/me/join-requests', (req,res)=>res.json(db.prepare("SELECT j.business_id AS businessId,b.name AS businessName,j.status FROM join_requests j JOIN businesses b ON b.id=j.business_id WHERE j.uid=?").all(req.user.uid)));
+router.delete('/me/join-requests/:businessId', (req,res)=>{
+  db.prepare('DELETE FROM join_requests WHERE uid=? AND business_id=?').run(req.user.uid,req.params.businessId);res.json({success:true});
+});
+router.delete('/me/account',async(req,res,next)=>{
+  try {
+    if(!Number.isFinite(req.user.auth_time) || Date.now()/1000-req.user.auth_time>300) return res.status(401).json({error:'For your security, sign out and sign in again, then delete your account within five minutes.'});
+    const completed=await require('../services/accountDeletion.service').remove(req.user);res.json({success:true,completed});
+  } catch(error){next(error);}
 });
 router.use('/team/:businessId', (req, res, next) => {
   req.membership = member(req.params.businessId, req.user.uid);
   if (!req.membership) return res.status(403).json({ error: 'You must belong to this business.' });
   next();
 });
+function managerOnly(req,res){if(req.membership.role!=='manager'){res.status(403).json({error:'Only managers can approve or remove members.'});return false;}return true;}
+router.get('/team/:businessId/join-requests',(req,res)=>{
+ if(!managerOnly(req,res))return;
+ res.json(db.prepare("SELECT j.uid, j.status, p.first_name AS firstName, p.last_name AS lastName FROM join_requests j LEFT JOIN user_profiles p ON p.uid=j.uid WHERE j.business_id=? AND j.status='pending'").all(req.params.businessId));
+});
+router.post('/team/:businessId/join-requests/:uid',(req,res)=>{
+ if(!managerOnly(req,res))return;
+ if(!['approve','reject'].includes(req.body.decision))return res.status(400).json({error:'Choose approve or reject.'});
+ const {businessId,uid}=req.params;
+ const result=db.transaction(()=>{
+  const request=db.prepare("SELECT * FROM join_requests WHERE business_id=? AND uid=? AND status='pending'").get(businessId,uid);
+  if(!request || db.prepare('SELECT uid FROM account_deletions WHERE uid=?').get(uid))return false;
+  if(req.body.decision==='approve')db.prepare("INSERT OR IGNORE INTO business_members(business_id,uid,role) VALUES(?,?,'employee')").run(businessId,uid);
+  db.prepare("UPDATE join_requests SET status=? WHERE business_id=? AND uid=?").run(req.body.decision==='approve'?'approved':'rejected',businessId,uid);return true;
+ })();
+ if(!result)return res.status(404).json({error:'Pending request not found.'});
+ res.json({success:true});
+});
+router.delete('/team/:businessId/members/:uid',async(req,res,next)=>{
+ try{
+ if(!managerOnly(req,res))return;
+ const {businessId,uid}=req.params;
+ const target=member(businessId,uid);
+ if(!target)return res.status(404).json({error:'Member not found.'});
+ if(target.role==='manager')return res.status(409).json({error:'Change this manager to an employee first. The creator and last manager remain protected.'});
+ await require('../services/accountDeletion.service').detach(uid,businessId);
+ res.json({success:true});
+ }catch(error){next(error);}
+});
+router.get('/team/:businessId/me/clock',(req,res)=>res.json(require('../services/timeClock.service').get(req.params.businessId,req.user.uid)));
+router.post('/team/:businessId/me/clock',(req,res,next)=>{try{res.json(require('../services/timeClock.service').change(req.params.businessId,req.user.uid,req.body.action));}catch(error){next(error);}});
 router.get('/team/:businessId/members', async (req, res, next) => {
   try {
-    const business = businesses.getById(req.params.businessId);
-    const legacy = await firebase.legacyMemberships(business.id);
-    db.transaction(() => {
-      const insert = db.prepare("INSERT OR IGNORE INTO business_members (business_id, uid, role) VALUES (?, ?, 'employee')");
-      for (const record of legacy) {
-        if (typeof record.uid === 'string' && record.uid && record.code === business.code) {
-          insert.run(business.id, record.uid);
-        }
-      }
-    })();
   const rows = db.prepare(`SELECT m.uid, m.role, m.accepts_bookings, m.joined_at, p.first_name, p.last_name, p.bio
     FROM business_members m LEFT JOIN user_profiles p ON p.uid=m.uid
     WHERE m.business_id=? ORDER BY CASE m.role WHEN 'manager' THEN 0 WHEN 'assistant_manager' THEN 1 ELSE 2 END,

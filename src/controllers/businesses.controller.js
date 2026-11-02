@@ -123,7 +123,10 @@ async function getByCode(req, res, next) {
     if (!business) {
       return res.status(404).json({ error: "No business found with that code." });
     }
+    const membership=db.prepare('SELECT role FROM business_members WHERE business_id=? AND uid=?').get(business.id,req.user.uid);
+    if(!membership)return res.status(403).json({error:'Request to join this business and wait for manager approval.'});
     res.json({
+      role: membership.role,
       businessId: business.id,
       businessName: business.name,
       businessType: business.business_type ?? null,
