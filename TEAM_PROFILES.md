@@ -110,3 +110,25 @@ full-interval conflicts, concurrent holds, decision ownership, expiry/release,
 calendar uncertainty and queued email delivery. External Firebase, Google, Resend
 and model calls are stubbed; real provider delivery/configuration and simulator/
 device UI validation still need deployment-environment testing.
+
+## Manual appointments in the app
+
+The + button on Schedule opens a customer/worker/date/time/notes form. Members can
+add to their own schedule; managers and assistant managers can assign another worker.
+Saved working hours, enabled-worker status, time off, business hours and full-window
+conflict checks still apply. No overbooking or availability override is provided.
+Customer email/phone are optional for phone bookings and walk-ins. If an email is
+provided, normal status emails are queued; without one, no customer email is queued.
+
+POST /api/team/:businessId/bookings/manual requires Firebase identity and membership.
+It accepts customerName, optional customerEmail/customerPhone/notes, exact workerUid,
+startDateTime, endDateTime and a per-form UUID requestId. Source and creator identity
+are set server-side, not trusted from the client. Repeated submissions return the
+same appointment; changing an already-used form's payload is rejected.
+
+Entering your own appointment counts as explicit acceptance and confirms after
+calendar checks. Assigning another worker creates a pending request for that worker.
+Walk-ins may start up to 15 minutes before entry if they have not ended; already-started
+requests assigned to another worker expire within 15 minutes or at appointment end.
+Future requests retain the normal response deadline. Backfilling older history is
+not supported. Calendar uncertainty retains the hold for manager review as usual.

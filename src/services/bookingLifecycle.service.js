@@ -5,7 +5,7 @@ const availability=require('./workerAvailability.service');
 function fail(status,message){const e=new Error(message);e.status=status;e.publicMessage=message;throw e;}
 function enqueue(id,event){
  const insert=db.prepare('INSERT OR IGNORE INTO booking_notifications(booking_id,event,recipient) VALUES(?,?,?)');
- insert.run(id,event,'customer');
+ if(db.prepare('SELECT customer_email FROM bookings WHERE id=?').get(id)?.customer_email)insert.run(id,event,'customer');
  if(event==='requested')insert.run(id,event,'worker');
 }
 function expire(){
@@ -33,7 +33,7 @@ async function respond(business,uid,id,decision){
  const booking=db.transaction(()=>{
   const row=db.prepare('SELECT * FROM bookings WHERE id=? AND business_id=? AND worker_uid=?').get(id,business.id,uid);
   if(!row)fail(404,'Appointment request not found for your account.');
-  if(row.status!=='pending_worker' || Date.parse(row.response_deadline)<=Date.now() || Date.parse(row.start_time)<=Date.now())fail(409,'This request has already been answered or expired.');
+  if(row.status!=='pending_worker' || Date.parse(row.response_deadline)<=Date.now() || (row.source!=='app' && Date.parse(row.start_time)<=Date.now()) || Date.parse(row.end_time)<=Date.now())fail(409,'This request has already been answered or expired.');
   const now=new Date().toISOString();
   if(decision==='accept' && !calendar.isWithinBusinessHours(row.start_time,row.end_time,business))fail(409,'This appointment is outside the current business opening hours. Decline the request or contact your manager.');
   if(decision==='accept' && !availability.available(business.id,uid,availability.utc(row.start_time),availability.utc(row.end_time)))fail(409,'This appointment is outside your current availability.');
@@ -42,6 +42,12 @@ async function respond(business,uid,id,decision){
   return row;
  })();
  if(decision==='decline')return {success:true,status:'declined'};
+ return confirmReserved(business,booking);
+}
+// Only call after the request has been accepted by its worker or that
+// worker has created their own manual appointment through the trusted route.
+async function confirmReserved(business,booking){
+ const id=booking.id,uid=booking.worker_uid;
  try{
   if(!await calendar.isWorkerSlotFree(booking.start_time,booking.end_time,business,uid)){
    db.transaction(()=>{db.prepare("UPDATE bookings SET status='declined' WHERE id=?").run(id);enqueue(id,'declined');})();
@@ -58,4 +64,4 @@ async function respond(business,uid,id,decision){
   fail(503,'Calendar confirmation needs review. This appointment is not confirmed; contact your manager.');
  }
 }
-module.exports={expire,enqueue,token,responseDeadline,publicStatus,respond};
+module.exports={expire,enqueue,token,responseDeadline,publicStatus,respond,confirmReserved};

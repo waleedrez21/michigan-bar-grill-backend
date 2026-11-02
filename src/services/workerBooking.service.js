@@ -70,11 +70,13 @@ async function availability(date, business, preference = {}) {
   }
   return {open:true,slots,workers:pool};
 }
-async function create(business, input, source = 'agent') {
-  if(typeof input.customerEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.customerEmail) || input.customerEmail.length>254) fail(400,'An email address is required for appointment status updates.');
+async function create(business, input, source = 'agent', options = {}) {
+  const manual=options.manual === true;
+  if(manual && (!options.actorUid || !options.requestId))fail(400,'Manual appointments require a signed-in creator and request ID.');
+  if((!manual || (input.customerEmail!=null && input.customerEmail!=='')) && (typeof input.customerEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.customerEmail) || input.customerEmail.length>254)) fail(400,'An email address is required for appointment status updates.');
   if (typeof input.customerName !== 'string' || !input.customerName.trim()) fail(400,'Customer name is required.');
   const [from,to] = window(input.startDateTime,input.endDateTime,business);
-  if(from<=Date.now())fail(422,'Choose an appointment in the future.');
+  if((!manual && from<=Date.now()) || (manual && (from<Date.now()-15*60000 || to<=Date.now())))fail(422,'Choose a future appointment or a walk-in starting within the last 15 minutes.');
   const pool = choosePool(business,input);
   // Balance no-preference bookings using assigned appointments on that local day.
   const date = new Intl.DateTimeFormat('en-CA',{timeZone:calendar.BUSINESS_TIMEZONE,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(from));
@@ -86,20 +88,36 @@ async function create(business, input, source = 'agent') {
     // Reserve before awaiting Google; recheck inside the write transaction so
     // simultaneous website requests cannot claim the same worker and window.
     const reservation = db.transaction(() => {
+      if(manual){
+        const existing=db.prepare('SELECT * FROM bookings WHERE business_id=? AND created_by_uid=? AND manual_request_id=?').get(business.id,options.actorUid,options.requestId);
+        if(existing)return {existing};
+      }
       const enabled = workers(business.id).some(w=>w.uid===worker.uid);
       if(!enabled || !localFree(business.id,worker.uid,from,to)) return null;
       const start=new Date(from).toISOString();
-      const token=lifecycle.token(),deadline=lifecycle.responseDeadline(start);
-      const id=Number(db.prepare(`INSERT INTO bookings (business_id,customer_name,customer_email,customer_phone,party_size,start_time,end_time,notes,source,status,worker_uid,worker_name,response_deadline,status_token)
-        VALUES (?,?,?,?,?,?,?,?,?,'pending_worker',?,?,?,?)`).run(business.id,input.customerName.trim(),input.customerEmail.trim(),input.customerPhone||null,input.partySize||null,start,new Date(to).toISOString(),input.notes||null,source,worker.uid,worker.name,deadline,token).lastInsertRowid);
-      lifecycle.enqueue(id,'requested');
-      return {id,token,deadline};
+      const token=lifecycle.token(),deadline=manual && from<=Date.now()?new Date(Math.min(Date.now()+15*60000,to)).toISOString():lifecycle.responseDeadline(start);
+      const selfAccepted=manual && worker.uid===options.actorUid;
+      const status=selfAccepted?'pending_calendar':'pending_worker';
+      const id=Number(db.prepare(`INSERT INTO bookings (business_id,customer_name,customer_email,customer_phone,party_size,start_time,end_time,notes,source,status,worker_uid,worker_name,response_deadline,status_token,created_by_uid,manual_request_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(business.id,input.customerName.trim(),input.customerEmail?.trim()||null,input.customerPhone||null,input.partySize||null,start,new Date(to).toISOString(),input.notes||null,source,status,worker.uid,worker.name,selfAccepted?null:deadline,token,manual?options.actorUid:null,manual?options.requestId:null).lastInsertRowid);
+      if(selfAccepted)db.prepare('UPDATE bookings SET responded_at=? WHERE id=?').run(new Date().toISOString(),id);
+      else lifecycle.enqueue(id,'requested');
+      return {id,token,deadline,selfAccepted};
     })();
     if(!reservation) continue;
+    if(reservation.existing)return resultFor(reservation.existing);
+    if(reservation.selfAccepted){
+      const row=db.prepare('SELECT * FROM bookings WHERE id=?').get(reservation.id);
+      await lifecycle.confirmReserved(business,row);
+      return resultFor(db.prepare('SELECT * FROM bookings WHERE id=?').get(row.id));
+    }
     return {success:true,id:reservation.id,status:'pending_worker',confirmationRequired:true,
       responseDeadline:reservation.deadline,statusToken:reservation.token,workerUid:worker.uid,workerName:worker.name,
       googleEventId:null,htmlLink:null,message:'Request received. This appointment is awaiting worker acceptance and is not confirmed.'};
   }
   fail(409,input.workerUid || input.workerName ? 'That worker is unavailable at that time. Offer another time or ask before choosing another worker.' : 'No worker is available at that time. Please choose another time.');
 }
-module.exports={staffBusiness,workers,availability,create,instant};
+function resultFor(row){
+ return {success:true,id:row.id,status:row.status,confirmationRequired:row.status==='pending_worker',responseDeadline:row.response_deadline,statusToken:row.status_token,workerUid:row.worker_uid,workerName:row.worker_name,googleEventId:row.google_event_id,htmlLink:null};
+}
+module.exports={staffBusiness,workers,availability,create,instant,resultFor};

@@ -170,3 +170,7 @@ db.exec(`
     UNIQUE(booking_id,event,recipient)
   );
 `);
+
+if (!columnExists('bookings','created_by_uid')) db.exec('ALTER TABLE bookings ADD COLUMN created_by_uid TEXT');
+if (!columnExists('bookings','manual_request_id')) db.exec('ALTER TABLE bookings ADD COLUMN manual_request_id TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_booking_request ON bookings(business_id,created_by_uid,manual_request_id)');

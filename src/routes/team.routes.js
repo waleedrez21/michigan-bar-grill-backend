@@ -110,4 +110,47 @@ router.post('/team/:businessId/bookings/:id/respond',async(req,res,next)=>{
     res.json(await require('../services/bookingLifecycle.service').respond(businesses.getById(req.params.businessId),req.user.uid,Number(req.params.id),req.body.decision));
   }catch(error){next(error);}
 });
+function sameManualInput(row,input){
+  try{
+    const instant=require('../services/workerBooking.service').instant;
+    return row.worker_uid===input.workerUid && row.customer_name===input.customerName.trim() &&
+      (row.customer_email||null)===(input.customerEmail?.trim()||null) &&
+      (row.customer_phone||null)===(input.customerPhone||null) && (row.notes||null)===(input.notes||null) &&
+      instant(row.start_time)===instant(input.startDateTime) && instant(row.end_time)===instant(input.endDateTime);
+  }catch{return false;}
+}
+router.post('/team/:businessId/bookings/manual',async(req,res,next)=>{
+  try{
+    const service=require('../services/workerBooking.service');
+    const business=businesses.getById(req.params.businessId);
+    if(!service.staffBusiness(business))return res.status(422).json({error:'Manual worker appointments are available for appointment businesses.'});
+    const input=Object.fromEntries(['requestId','customerName','customerEmail','customerPhone','notes','workerUid','startDateTime','endDateTime'].map(key=>[key,req.body[key]]));
+    const requestId=input.requestId;
+    if(typeof requestId!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))return res.status(400).json({error:'A valid request ID is required.'});
+    if(typeof input.workerUid!=='string' || !input.workerUid)return res.status(400).json({error:'Choose the worker for this appointment.'});
+    const manages=['manager','assistant_manager'].includes(req.membership.role);
+    if(input.workerUid!==req.user.uid && !manages)return res.status(403).json({error:'You can only add appointments to your own schedule.'});
+    if(input.customerPhone!=null && (typeof input.customerPhone!=='string'||input.customerPhone.length>80))return res.status(400).json({error:'Phone must be text of at most 80 characters.'});
+    if(input.notes!=null && (typeof input.notes!=='string'||input.notes.length>2000))return res.status(400).json({error:'Notes must be text of at most 2000 characters.'});
+    if(typeof input.customerName!=='string'||input.customerName.length>160)return res.status(400).json({error:'Enter a customer name of at most 160 characters.'});
+    const existing=db.prepare('SELECT * FROM bookings WHERE business_id=? AND created_by_uid=? AND manual_request_id=?').get(business.id,req.user.uid,requestId);
+    if(existing){
+      if(!sameManualInput(existing,input))return res.status(409).json({error:`This form already created appointment #${existing.id}. Close it and check the schedule before adding another.`});
+      return res.json(service.resultFor(existing));
+    }
+    const result=await service.create(business,input,'app',{manual:true,actorUid:req.user.uid,requestId});
+    const created=db.prepare('SELECT * FROM bookings WHERE id=?').get(result.id);
+    if(!sameManualInput(created,input))return res.status(409).json({error:`This form already created appointment #${created.id}. Check the schedule before adding another.`});
+    res.status(201).json(result);
+  }catch(error){
+    // A simultaneous retry may reach the conflict check after the first
+    // request reserved its slot. Return that same appointment, not a duplicate.
+    const existing=typeof req.body.requestId==='string'?db.prepare('SELECT * FROM bookings WHERE business_id=? AND created_by_uid=? AND manual_request_id=?').get(req.params.businessId,req.user.uid,req.body.requestId):null;
+    if(existing && error.status===409){
+      if(!sameManualInput(existing,req.body))return res.status(409).json({error:`This form already created appointment #${existing.id}. Check the schedule before adding another.`});
+      return res.json(require('../services/workerBooking.service').resultFor(existing));
+    }
+    next(error);
+  }
+});
 module.exports = router;
