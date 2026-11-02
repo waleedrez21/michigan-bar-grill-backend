@@ -89,7 +89,14 @@ test('saved availability, pending holds, assigned-worker decisions, expiry and s
   const answers=await Promise.allSettled([lifecycle.respond({...b,google_calendar_id:''},'worker',race.id,'accept'),lifecycle.respond({...b,google_calendar_id:''},'worker',race.id,'accept')]);
   assert.equal(answers.filter(a=>a.status==='fulfilled').length,1);
   assert.throws(()=>hours.save(b.id,'worker',blocked),e=>e.status===409); // confirmed commitments stay protected
+  email.sendBookingUpdate=async()=>({sent:false});
   await maintenance.run();
+  const deferred=db.prepare('SELECT * FROM booking_notifications WHERE sent_at IS NULL AND attempts>0').all();
+  assert(deferred.length>0);assert(deferred.every(row=>Date.parse(row.next_attempt_at)>Date.now()));
+  email.sendBookingUpdate=async message=>{deliveries.push(message);return {sent:true};};
+  db.prepare("UPDATE booking_notifications SET next_attempt_at='2000-01-01T00:00:00.000Z' WHERE sent_at IS NULL").run();
+  await maintenance.run();
+  assert.equal(db.prepare('SELECT count(*) AS n FROM booking_notifications WHERE sent_at IS NULL').get().n,0);
   assert(deliveries.some(d=>d.text.includes('expired')));
   assert(deliveries.some(d=>d.text.includes('declined')));
  }finally{await new Promise(resolve=>server.close(resolve));db.close();fs.rmSync(directory,{recursive:true,force:true});}
