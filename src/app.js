@@ -47,10 +47,13 @@ app.use("/api/bookings", bookingRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/businesses", businessesRoutes);
+app.use("/api", require("./routes/team.routes"));
 app.use("/api/verification", verificationRoutes);
 app.use("/api/auth", authRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Not found" }));
 app.use(errorHandler);
+
+require('./services/bookingMaintenance.service').start();
 
 module.exports = app;

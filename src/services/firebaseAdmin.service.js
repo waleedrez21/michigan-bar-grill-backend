@@ -23,4 +23,31 @@ async function updatePasswordByEmail(email, newPassword) {
   await auth.updateUser(user.uid, { password: newPassword });
 }
 
-module.exports = { updatePasswordByEmail };
+async function verifyIdToken(token) {
+  ensureInitialized();
+  return getAuth().verifyIdToken(token, true);
+}
+async function legacyMemberships(businessId) {
+  ensureInitialized();
+  const { getFirestore } = require('firebase-admin/firestore');
+  const snapshot = await getFirestore().collection('memberships').where('businessId', '==', businessId).get();
+  return snapshot.docs.map(doc => doc.data());
+}
+async function userEmail(uid) {
+  ensureInitialized();
+  return (await getAuth().getUser(uid)).email;
+}
+module.exports = { updatePasswordByEmail, verifyIdToken, legacyMemberships, userEmail };
+
+async function sendPush(token,notification,data){
+  ensureInitialized();
+  const {getMessaging}=require('firebase-admin/messaging');
+  try{
+    await getMessaging().send({token,notification,data,apns:{headers:{'apns-priority':'10'},payload:{aps:{sound:'default'}}}});
+    return {sent:true};
+  }catch(error){
+    if(['messaging/registration-token-not-registered','messaging/invalid-registration-token'].includes(error.code))return {sent:false,invalid:true};
+    throw error;
+  }
+}
+module.exports.sendPush=sendPush;

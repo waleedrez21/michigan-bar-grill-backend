@@ -58,4 +58,9 @@ async function sendVerificationCode({ email, code }) {
   return { sent: true };
 }
 
-module.exports = { sendContactNotification, sendVerificationCode, isConfigured };
+async function sendBookingUpdate({to,subject,text,idempotencyKey}) {
+  if(!isConfigured() || !to)return {sent:false};
+  const {error}=await getClient().emails.send({from:FROM_ADDRESS,to,subject,text},{idempotencyKey});
+  return {sent:!error};
+}
+module.exports = { sendContactNotification, sendVerificationCode, isConfigured, sendBookingUpdate };

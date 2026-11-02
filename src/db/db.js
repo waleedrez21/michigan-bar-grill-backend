@@ -117,3 +117,74 @@ db.exec(`
 `);
 
 module.exports = db;
+
+// Account identities and roles are server-owned; a business API key alone
+// never grants permission to manage members. Existing businesses stay unclaimed.
+if (!columnExists('businesses', 'creator_uid')) {
+  db.exec('ALTER TABLE businesses ADD COLUMN creator_uid TEXT');
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    uid TEXT PRIMARY KEY,
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    bio TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS business_members (
+    business_id TEXT NOT NULL REFERENCES businesses(id),
+    uid TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'employee'
+      CHECK(role IN ('manager', 'assistant_manager', 'employee')),
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(business_id, uid)
+  );
+  CREATE INDEX IF NOT EXISTS idx_business_members_uid ON business_members(uid);
+`);
+
+if (!columnExists('business_members', 'accepts_bookings')) {
+  db.exec('ALTER TABLE business_members ADD COLUMN accepts_bookings INTEGER NOT NULL DEFAULT 0');
+}
+if (!columnExists('bookings', 'worker_uid')) {
+  db.exec('ALTER TABLE bookings ADD COLUMN worker_uid TEXT');
+}
+if (!columnExists('bookings', 'worker_name')) {
+  db.exec('ALTER TABLE bookings ADD COLUMN worker_name TEXT');
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_bookings_worker ON bookings(business_id, worker_uid, status)');
+
+if (!columnExists('bookings', 'response_deadline')) db.exec('ALTER TABLE bookings ADD COLUMN response_deadline TEXT');
+if (!columnExists('bookings', 'responded_at')) db.exec('ALTER TABLE bookings ADD COLUMN responded_at TEXT');
+if (!columnExists('bookings', 'status_token')) db.exec('ALTER TABLE bookings ADD COLUMN status_token TEXT');
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_status_token ON bookings(status_token);
+  CREATE TABLE IF NOT EXISTS worker_availability (
+    business_id TEXT NOT NULL, uid TEXT NOT NULL,
+    weekly_json TEXT NOT NULL DEFAULT '[]', time_off_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY(business_id,uid)
+  );
+  CREATE TABLE IF NOT EXISTS booking_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, booking_id INTEGER NOT NULL,
+    event TEXT NOT NULL, recipient TEXT NOT NULL, sent_at TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
+    UNIQUE(booking_id,event,recipient)
+  );
+`);
+
+if (!columnExists('bookings','created_by_uid')) db.exec('ALTER TABLE bookings ADD COLUMN created_by_uid TEXT');
+if (!columnExists('bookings','manual_request_id')) db.exec('ALTER TABLE bookings ADD COLUMN manual_request_id TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_booking_request ON bookings(business_id,created_by_uid,manual_request_id)');
+
+for (const [name,type] of Object.entries({service_id:'TEXT',service_name:'TEXT',service_duration_minutes:'INTEGER',price_cents:'INTEGER',currency:'TEXT',replaces_booking_id:'INTEGER',cancellation_reason:'TEXT'})) {
+  if(!columnExists('bookings',name))db.exec(`ALTER TABLE bookings ADD COLUMN ${name} ${type}`);
+}
+db.exec(`
+ CREATE TABLE IF NOT EXISTS appointment_services (
+  id TEXT PRIMARY KEY,business_id TEXT NOT NULL,name TEXT NOT NULL,
+  duration_minutes INTEGER NOT NULL,price_cents INTEGER NOT NULL,currency TEXT NOT NULL,
+  worker_uids_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1
+ );
+ CREATE INDEX IF NOT EXISTS idx_appointment_services_business ON appointment_services(business_id);
+ CREATE TABLE IF NOT EXISTS push_tokens (token TEXT PRIMARY KEY,uid TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS idx_push_tokens_uid ON push_tokens(uid);
+`);

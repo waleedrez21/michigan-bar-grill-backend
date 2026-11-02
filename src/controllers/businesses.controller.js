@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const businessesRepo = require("../db/businessesRepo");
+const db = require("../db/db");
 
 const BUSINESS_TYPES = [
   "Restaurant", "Barbershop", "Nail Salon", "HVAC",
@@ -77,16 +78,21 @@ async function postSignup(req, res, next) {
     const id = slugify(businessName);
     const apiKey = generateApiKey();
 
-    const business = businessesRepo.create({
-      id,
-      name: businessName.trim(),
-      apiKey,
-      googleCalendarId: "", // not yet configured — set up later via settings
-      restaurantInfo: defaultRestaurantInfo(businessName.trim()),
-      menuItems: [],
-      businessType,
-      code,
-    });
+    const business = db.transaction(() => {
+      const created = businessesRepo.create({
+        id,
+        name: businessName.trim(),
+        apiKey,
+        googleCalendarId: "", // not yet configured — set up later via settings
+        restaurantInfo: defaultRestaurantInfo(businessName.trim()),
+        menuItems: [],
+        businessType,
+        code,
+      });
+      db.prepare('UPDATE businesses SET creator_uid = ? WHERE id = ?').run(req.user.uid, created.id);
+      db.prepare("INSERT INTO business_members (business_id, uid, role) VALUES (?, ?, 'manager')").run(created.id, req.user.uid);
+      return created;
+    })();
 
     res.status(201).json({
       businessId: business.id,
@@ -94,6 +100,7 @@ async function postSignup(req, res, next) {
       businessType: business.business_type ?? null,
       apiKey: business.api_key,
       code: business.code,
+      role: "manager",
     });
   } catch (err) {
     if (err.code === "SQLITE_CONSTRAINT_UNIQUE" || err.code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
