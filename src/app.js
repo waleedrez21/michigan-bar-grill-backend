@@ -38,7 +38,11 @@ app.use(
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), handleStripeWebhook);
 
 app.use(express.json({ limit: "1mb" }));
-app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+// Never log bearer booking-status tokens, customer URLs, or request bodies.
+app.use(morgan(':method :status :response-time ms'));
+app.use('/api', (req,res,next)=>{res.set('Cache-Control','no-store');next();});
+app.use('/api', (req,res,next)=>req.method==='POST' ? require('./middleware/securityLimits').publicWrite(req,res,next):next());
+app.use('/api', require('./routes/privacy.routes'));
 
 app.get("/api/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 

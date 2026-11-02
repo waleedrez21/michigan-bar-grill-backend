@@ -7,6 +7,6 @@ const router = express.Router();
 // the app GETS a business/API key in the first place, so they can't require
 // one already being set.
 router.post("/signup", require("../middleware/firebaseUser"), postSignup);
-router.get("/by-code/:code", getByCode);
+router.get("/by-code/:code", require("../middleware/firebaseUser"), getByCode);
 
 module.exports = router;

@@ -11,7 +11,7 @@ async function postCheckout(req, res, next) {
     const business = req.business;
     const { items, customerName, customerEmail, customerPhone } = req.body;
 
-    if (!Array.isArray(items) || items.length === 0) {
+    if (!Array.isArray(items) || items.length === 0 || items.length > 100) {
       return res.status(400).json({ error: "`items` must be a non-empty array of { id, quantity }." });
     }
 
@@ -90,8 +90,6 @@ function getBySession(req, res, next) {
 
     res.json({
       id: order.id,
-      customerName: order.customer_name,
-      customerPhone: order.customer_phone,
       items: JSON.parse(order.items_json),
       subtotal: order.subtotal_cents / 100,
       status: order.status,
