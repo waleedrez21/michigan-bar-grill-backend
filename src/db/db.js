@@ -117,3 +117,27 @@ db.exec(`
 `);
 
 module.exports = db;
+
+// Account identities and roles are server-owned; a business API key alone
+// never grants permission to manage members. Existing businesses stay unclaimed.
+if (!columnExists('businesses', 'creator_uid')) {
+  db.exec('ALTER TABLE businesses ADD COLUMN creator_uid TEXT');
+}
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    uid TEXT PRIMARY KEY,
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    bio TEXT NOT NULL DEFAULT ''
+  );
+  CREATE TABLE IF NOT EXISTS business_members (
+    business_id TEXT NOT NULL REFERENCES businesses(id),
+    uid TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'employee'
+      CHECK(role IN ('manager', 'assistant_manager', 'employee')),
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(business_id, uid)
+  );
+  CREATE INDEX IF NOT EXISTS idx_business_members_uid ON business_members(uid);
+`);

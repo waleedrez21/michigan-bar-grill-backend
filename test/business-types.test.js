@@ -22,6 +22,7 @@ legacy.close();
 const db = require('../src/db/db');
 const express = require('express');
 const routes = require('../src/routes/businesses.routes');
+require('../src/services/firebaseAdmin.service').verifyIdToken = async () => ({uid:'test-creator'});
 
 test('migration and business type HTTP contract', async () => {
   assert.equal(db.prepare('SELECT business_type FROM businesses WHERE id = ?').get('legacy').business_type, null);
@@ -35,7 +36,7 @@ test('migration and business type HTTP contract', async () => {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}/api/businesses`;
-  const signup = body => fetch(`${base}/signup`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const signup = body => fetch(`${base}/signup`, {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer test'}, body:JSON.stringify(body)});
   try {
     for (const businessType of ['Restaurant','Barbershop','Nail Salon','HVAC','Exterior Cleaning','Auto Detailing']) {
       const response = await signup({businessName:`Test ${businessType}`, businessType});

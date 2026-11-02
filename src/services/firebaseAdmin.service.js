@@ -23,4 +23,14 @@ async function updatePasswordByEmail(email, newPassword) {
   await auth.updateUser(user.uid, { password: newPassword });
 }
 
-module.exports = { updatePasswordByEmail };
+async function verifyIdToken(token) {
+  ensureInitialized();
+  return getAuth().verifyIdToken(token, true);
+}
+async function legacyMemberships(businessId) {
+  ensureInitialized();
+  const { getFirestore } = require('firebase-admin/firestore');
+  const snapshot = await getFirestore().collection('memberships').where('businessId', '==', businessId).get();
+  return snapshot.docs.map(doc => doc.data());
+}
+module.exports = { updatePasswordByEmail, verifyIdToken, legacyMemberships };
