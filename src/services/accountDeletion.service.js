@@ -57,6 +57,8 @@ async function perform(uid){
    db.prepare("UPDATE bookings SET customer_name='Deleted customer',customer_email=NULL,customer_phone=NULL,notes=NULL WHERE lower(customer_email)=?").run(job.email);
    db.prepare("UPDATE orders SET customer_name='Deleted customer',customer_email=NULL,customer_phone=NULL WHERE lower(customer_email)=?").run(job.email);
    db.prepare('DELETE FROM verification_codes WHERE email=?').run(job.email);
+   db.prepare('DELETE FROM email_verification_grants WHERE email=?').run(job.email);
+   for(const row of db.prepare('SELECT id,history_json FROM chat_sessions').all())if(row.history_json.toLowerCase().includes(job.email))db.prepare('DELETE FROM chat_sessions WHERE id=?').run(row.id);
    db.prepare('DELETE FROM contact_messages WHERE lower(email)=?').run(job.email);
   }
  })();

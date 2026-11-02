@@ -16,6 +16,6 @@ async function run(){
   db.prepare("UPDATE bookings SET customer_name='Archived customer',customer_email=NULL,customer_phone=NULL,notes=NULL,worker_uid=NULL,worker_name=NULL,created_by_uid=NULL,manual_request_id=NULL,status_token=NULL WHERE id=?").run(row.id);
  }
  db.prepare("UPDATE orders SET customer_name='Archived customer',customer_email=NULL,customer_phone=NULL WHERE datetime(created_at)<datetime('now','-365 days')").run();
- db.prepare("DELETE FROM clock_sessions WHERE clock_out IS NOT NULL AND datetime(clock_out)<datetime('now','-365 days')").run();
+ db.prepare("DELETE FROM clock_sessions WHERE clock_out IS NOT NULL AND datetime(clock_out)<datetime('now','-1095 days')").run();
 }
 module.exports={run};

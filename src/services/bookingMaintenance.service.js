@@ -10,8 +10,8 @@ async function run(){
  try{
   lifecycle.expire();alerts.schedule();
   await require('./accountDeletion.service').retry();
-  await require('./accountDeletion.service').customerRequests();
-  await require('./retention.service').run();
+  try{await require('./accountDeletion.service').customerRequests();}catch(error){console.error('[customer-deletion] retry deferred');}
+  try{await require('./retention.service').run();}catch(error){console.error('[retention] cleanup deferred');}
   const rows=db.prepare(`SELECT n.*,b.business_id,b.customer_email,b.customer_name,b.worker_uid,b.worker_name,b.start_time,b.status,b.status_token,b.response_deadline,b.service_name,b.price_cents,b.currency,b.replaces_booking_id,
    businesses.name AS business_name FROM booking_notifications n JOIN bookings b ON b.id=n.booking_id JOIN businesses ON businesses.id=b.business_id
    WHERE n.sent_at IS NULL AND (n.next_attempt_at IS NULL OR n.next_attempt_at<=?) ORDER BY n.id LIMIT 100`).all(new Date().toISOString());

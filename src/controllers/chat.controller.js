@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require("uuid");
+const { randomUUID: uuidv4 } = require("node:crypto");
 const agentService = require("../services/deepseek.service");
 const sessionsRepo = require("../db/sessionsRepo");
 

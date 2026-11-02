@@ -59,7 +59,7 @@ async function postConfirm(req, res, next) {
     if (row.verified || !Number.isFinite(Date.parse(row.expires_at)) || Date.parse(row.expires_at) <= Date.now()) {
       return res.status(400).json({ error: "That code has expired. Please request a new one." });
     }
-    if (row.code !== String(code).trim()) {
+    if (!verificationRepo.checkCode(row,String(code))) {
       verificationRepo.incrementAttempts(row.id);
       return res.status(400).json({ error: "Incorrect code. Please try again." });
     }
