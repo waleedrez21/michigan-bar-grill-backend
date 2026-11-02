@@ -8,7 +8,7 @@ async function getAvailability(req, res, next) {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: "`date` query param (YYYY-MM-DD) is required." });
     const result = workerBookings.staffBusiness(req.business)
-      ? await workerBookings.availability(date, req.business, {workerUid:req.query.workerUid,workerName:req.query.workerName})
+      ? await workerBookings.availability(date, req.business, {workerUid:req.query.workerUid,workerName:req.query.workerName,serviceId:req.query.serviceId})
       : await calendarService.getAvailabilityForDate(date, req.business);
     res.json(result);
   } catch (err) {

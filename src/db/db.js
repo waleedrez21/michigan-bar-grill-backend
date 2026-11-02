@@ -174,3 +174,17 @@ db.exec(`
 if (!columnExists('bookings','created_by_uid')) db.exec('ALTER TABLE bookings ADD COLUMN created_by_uid TEXT');
 if (!columnExists('bookings','manual_request_id')) db.exec('ALTER TABLE bookings ADD COLUMN manual_request_id TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_booking_request ON bookings(business_id,created_by_uid,manual_request_id)');
+
+for (const [name,type] of Object.entries({service_id:'TEXT',service_name:'TEXT',service_duration_minutes:'INTEGER',price_cents:'INTEGER',currency:'TEXT',replaces_booking_id:'INTEGER',cancellation_reason:'TEXT'})) {
+  if(!columnExists('bookings',name))db.exec(`ALTER TABLE bookings ADD COLUMN ${name} ${type}`);
+}
+db.exec(`
+ CREATE TABLE IF NOT EXISTS appointment_services (
+  id TEXT PRIMARY KEY,business_id TEXT NOT NULL,name TEXT NOT NULL,
+  duration_minutes INTEGER NOT NULL,price_cents INTEGER NOT NULL,currency TEXT NOT NULL,
+  worker_uids_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1
+ );
+ CREATE INDEX IF NOT EXISTS idx_appointment_services_business ON appointment_services(business_id);
+ CREATE TABLE IF NOT EXISTS push_tokens (token TEXT PRIMARY KEY,uid TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS idx_push_tokens_uid ON push_tokens(uid);
+`);

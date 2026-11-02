@@ -53,7 +53,7 @@ function available(businessId,uid,from,to){return covers(get(businessId,uid),fro
 function save(businessId,uid,input){
  const schedule=normalize(input);
  db.transaction(()=>{
-  const rows=db.prepare("SELECT id,start_time,end_time,status,response_deadline FROM bookings WHERE business_id=? AND worker_uid=? AND status IN ('confirmed','pending_worker','pending_calendar','calendar_review')").all(businessId,uid);
+  const rows=db.prepare("SELECT id,start_time,end_time,status,response_deadline FROM bookings WHERE business_id=? AND worker_uid=? AND status IN ('confirmed','pending_worker','pending_calendar','calendar_review','cancellation_review','cancelling','rescheduling')").all(businessId,uid);
   const conflict=rows.find(row=>utc(row.end_time)>Date.now() && !(row.status==='pending_worker'&&Date.parse(row.response_deadline)<=Date.now()) && !covers(schedule,utc(row.start_time),utc(row.end_time)));
   if(conflict)fail(`This change conflicts with appointment #${conflict.id}. Resolve that appointment before changing these hours.`,409);
   db.prepare(`INSERT INTO worker_availability(business_id,uid,weekly_json,time_off_json) VALUES(?,?,?,?)

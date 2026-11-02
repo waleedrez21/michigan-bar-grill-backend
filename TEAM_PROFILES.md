@@ -63,8 +63,8 @@ Configure RESEND_API_KEY and EMAIL_FROM using a verified sender domain. Set
 PUBLIC_API_URL to the backend's public HTTPS origin (RAILWAY_PUBLIC_DOMAIN is also
 supported). Without valid email configuration, delivery remains queued for retry;
 no emails are falsely reported delivered. Delivery retries use stable provider
-idempotency keys. The app inbox works independently of email. No SMS or APNs push
-integration is included.
+idempotency keys. The app inbox works independently of email. Worker push alerts use Firebase Cloud
+Messaging/APNs after device permission and registration; SMS is not included.
 
 Customer emails acknowledge the request and report confirmed, declined, expired or
 calendar-review status. Each contains an unguessable status link. Status pages do
@@ -132,3 +132,78 @@ Walk-ins may start up to 15 minutes before entry if they have not ended; already
 requests assigned to another worker expire within 15 minutes or at appointment end.
 Future requests retain the normal response deadline. Backfilling older history is
 not supported. Calendar uncertainty retains the hold for manager review as usual.
+
+
+## Services, changes, reminders and operations
+
+Managers/assistant managers configure services from Schedule > Services and prices:
+name, 5–480 minute duration, price in cents, CAD/USD, eligible business members and
+active status. Once an active catalog exists, new appointments must select a service.
+The server derives the complete end time and saves the chosen name/duration/price/
+currency snapshot; later catalog edits do not alter existing quotes. Catalog-empty
+businesses retain freeform booking durations during onboarding. Public catalog
+listing is GET /api/bookings/services; assistant tools include list_services.
+Availability checks accept serviceId and offer 15-minute start increments covering
+the complete service duration, using one Google day-events query per worker.
+
+Staff can cancel or reschedule from appointment details. Customers use the private
+management link in their email: view details/status, choose service/worker/date/time,
+request a reschedule, or cancel. No customer app account or business API key is
+required for that token-owned booking. Tokens remain confidential and pages set
+no-store/no-referrer. The customer page's scripts are served from the same origin
+and work with the backend Content Security Policy.
+
+Reschedules create a separate replacement hold and preserve the original confirmed
+appointment until the replacement is accepted and calendar changes succeed. Decline
+or expiry leaves the original intact. Only one active replacement is allowed.
+Worker self-reschedules count as acceptance; customer/other-worker changes require
+worker acceptance. Cancelling an original also cancels its unanswered replacement.
+Cancellation/calendar failures retain holds for review instead of freeing possibly
+occupied slots. Old and new bookings are linked on customer status pages.
+
+Worker calendar inserts use deterministic event IDs. Manager reconciliation checks
+for an existing matching event before retrying, avoiding duplicate events after an
+uncertain insert. Calendar operations in progress must be given two minutes before
+a retry. Mismatched Google events require manual investigation rather than guessing.
+
+Additional authenticated APIs:
+- GET/POST /api/team/:businessId/services and PUT .../services/:id.
+- GET /api/team/:businessId/bookings/:id (assigned worker or manager).
+- POST .../bookings/:id/cancel with optional reason.
+- POST .../bookings/:id/reschedule with requestId UUID, workerUid, serviceId and startDateTime.
+- GET /api/team/:businessId/operations: unanswered requests, calendar holds, queued
+  or failing delivery attempts and workers missing registered push tokens.
+- POST .../bookings/:id/reconcile and .../notifications/:id/retry (manager-only).
+- POST/DELETE /api/me/push-tokens with token, scoped to authenticated identity.
+
+Customer-token APIs: GET /api/bookings/status/:token/options (optional date, workerUid,
+serviceId), POST .../cancel and .../reschedule. Changing one appointment never grants
+access to another customer's details. Staff authorization is enforced server-side.
+
+Maintenance queues customer email reminders once at 24 hours and two hours before
+confirmed appointments; appointments booked with less notice receive the applicable
+upcoming reminder. The 24-hour reminder is skipped if delivery was deferred into the
+two-hour window. Cancelled/expired requests and stale reminders are not delivered.
+Workers receive email/push for new requests and changes, and a response reminder
+within the last 15 minutes of the response window. Failed delivery is retried with
+backoff and visible in Booking operations. Calendar and notification problems can
+be retried separately. The server must be running for timed reminders; queued jobs
+and idempotency keys survive deploys on the persistent database.
+
+### iPhone push setup and release validation
+
+FirebaseMessaging was already linked; this update adds the app delegate, user-facing
+permission flow, FCM token registration/removal, foreground alerts and booking deep
+links. Signing includes the aps-environment entitlement: Debug uses development,
+Release uses production. Enable Push Notifications for com.rayans.workbay in the
+Apple developer account, use a matching provisioning profile, and upload the APNs
+authentication key to the matching Firebase iOS app's Cloud Messaging configuration.
+The backend uses its existing Firebase Admin credentials. No Apple secret is stored
+in source. Real APNs delivery requires this provider setup and a signed device build.
+
+On a physical iPhone: enable alerts from Schedule, verify the manager sees the worker
+registered, submit a customer request, test foreground/background delivery and tap
+navigation, then sign out and confirm device unregistration. Also test service edits,
+customer/staff rescheduling with acceptance/decline, failed-calendar reconciliation,
+email reminders and manager-only operations. Backend automated tests stub providers;
+this environment cannot build Xcode or validate real APNs/Google/Resend delivery.

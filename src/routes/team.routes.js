@@ -4,7 +4,7 @@ const businesses = require('../db/businessesRepo');
 const requireUser = require('../middleware/firebaseUser');
 const firebase = require('../services/firebaseAdmin.service');
 const router = express.Router();
-router.use(requireUser);
+router.use(['/me','/team'],requireUser);
 
 function businessJSON(b, role) {
   return { businessId: b.id, businessName: b.name, businessType: b.business_type || '',
@@ -17,6 +17,11 @@ function profile(uid) {
   const row = db.prepare('SELECT * FROM user_profiles WHERE uid = ?').get(uid) || {};
   return { uid, firstName: row.first_name || '', lastName: row.last_name || '', phone: row.phone || '', bio: row.bio || '' };
 }
+router.post('/me/push-tokens',(req,res)=>{
+  const token=req.body.token;if(typeof token!=='string'||token.length<20||token.length>4096)return res.status(400).json({error:'Invalid push token.'});
+  db.prepare('INSERT INTO push_tokens(token,uid,updated_at) VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET uid=excluded.uid,updated_at=excluded.updated_at').run(token,req.user.uid,new Date().toISOString());res.json({success:true});
+});
+router.delete('/me/push-tokens',(req,res)=>{db.prepare('DELETE FROM push_tokens WHERE token=? AND uid=?').run(typeof req.body.token==='string'?req.body.token:'',req.user.uid);res.json({success:true});});
 router.get('/me/profile', (req, res) => res.json(profile(req.user.uid)));
 router.put('/me/profile', (req, res) => {
   const values = {};
@@ -116,7 +121,7 @@ function sameManualInput(row,input){
     return row.worker_uid===input.workerUid && row.customer_name===input.customerName.trim() &&
       (row.customer_email||null)===(input.customerEmail?.trim()||null) &&
       (row.customer_phone||null)===(input.customerPhone||null) && (row.notes||null)===(input.notes||null) &&
-      instant(row.start_time)===instant(input.startDateTime) && instant(row.end_time)===instant(input.endDateTime);
+      instant(row.start_time)===instant(input.startDateTime) && (row.service_id||null)===(input.serviceId||null) && (row.service_id || instant(row.end_time)===instant(input.endDateTime));
   }catch{return false;}
 }
 router.post('/team/:businessId/bookings/manual',async(req,res,next)=>{
@@ -124,7 +129,7 @@ router.post('/team/:businessId/bookings/manual',async(req,res,next)=>{
     const service=require('../services/workerBooking.service');
     const business=businesses.getById(req.params.businessId);
     if(!service.staffBusiness(business))return res.status(422).json({error:'Manual worker appointments are available for appointment businesses.'});
-    const input=Object.fromEntries(['requestId','customerName','customerEmail','customerPhone','notes','workerUid','startDateTime','endDateTime'].map(key=>[key,req.body[key]]));
+    const input=Object.fromEntries(['requestId','customerName','customerEmail','customerPhone','notes','workerUid','startDateTime','endDateTime','serviceId'].map(key=>[key,req.body[key]]));
     const requestId=input.requestId;
     if(typeof requestId!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId))return res.status(400).json({error:'A valid request ID is required.'});
     if(typeof input.workerUid!=='string' || !input.workerUid)return res.status(400).json({error:'Choose the worker for this appointment.'});
@@ -152,5 +157,32 @@ router.post('/team/:businessId/bookings/manual',async(req,res,next)=>{
     }
     next(error);
   }
+});
+function manages(req,res){if(!['manager','assistant_manager'].includes(req.membership.role)){res.status(403).json({error:'Manager access required.'});return false;}return true;}
+router.get('/team/:businessId/services',(req,res,next)=>{try{res.json(require('../services/appointmentCatalog.service').list(req.params.businessId,true));}catch(e){next(e);}});
+router.post('/team/:businessId/services',(req,res,next)=>{try{if(!manages(req,res))return;res.status(201).json(require('../services/appointmentCatalog.service').save(req.params.businessId,req.body));}catch(e){next(e);}});
+router.put('/team/:businessId/services/:id',(req,res,next)=>{try{if(!manages(req,res))return;res.json(require('../services/appointmentCatalog.service').save(req.params.businessId,req.body,req.params.id));}catch(e){next(e);}});
+router.post('/team/:businessId/bookings/:id/cancel',async(req,res,next)=>{
+ try{const change=require('../services/bookingChanges.service'),row=change.get(Number(req.params.id),req.params.businessId);if(row.worker_uid!==req.user.uid&&!['manager','assistant_manager'].includes(req.membership.role))return res.status(403).json({error:'You can only change your own appointments.'});res.json(await change.cancel(businesses.getById(req.params.businessId),row.id,req.body.reason||''));}catch(e){next(e);}
+});
+router.post('/team/:businessId/bookings/:id/reschedule',async(req,res,next)=>{
+ try{const change=require('../services/bookingChanges.service'),row=change.get(Number(req.params.id),req.params.businessId);const manager=['manager','assistant_manager'].includes(req.membership.role);if(row.worker_uid!==req.user.uid&&!manager)return res.status(403).json({error:'You can only change your own appointments.'});if(req.body.workerUid&&req.body.workerUid!==req.user.uid&&!manager)return res.status(403).json({error:'Only managers can reassign another worker.'});res.json(await change.reschedule(businesses.getById(req.params.businessId),row.id,req.body,req.user.uid));}catch(e){next(e);}
+});
+router.get('/team/:businessId/operations',(req,res,next)=>{
+ try{if(!manages(req,res))return;require('../services/bookingLifecycle.service').expire();
+  const b=req.params.businessId;
+  const pending=db.prepare("SELECT * FROM bookings WHERE business_id=? AND status='pending_worker' ORDER BY response_deadline").all(b);
+  const issues=db.prepare("SELECT * FROM bookings WHERE business_id=? AND status IN ('calendar_review','cancellation_review','pending_calendar','cancelling','rescheduling') ORDER BY start_time").all(b);
+  const notifications=db.prepare(`SELECT n.id,n.booking_id,n.event,n.recipient,n.attempts,n.next_attempt_at FROM booking_notifications n JOIN bookings b ON b.id=n.booking_id WHERE b.business_id=? AND n.sent_at IS NULL ORDER BY n.attempts DESC,n.id LIMIT 100`).all(b);
+  const noPush=db.prepare(`SELECT m.uid,p.first_name,p.last_name FROM business_members m LEFT JOIN user_profiles p ON p.uid=m.uid WHERE m.business_id=? AND m.accepts_bookings=1 AND NOT EXISTS (SELECT 1 FROM push_tokens t WHERE t.uid=m.uid)`).all(b).map(w=>({uid:w.uid,name:`${w.first_name||''} ${w.last_name||''}`.trim()||'Member'}));
+  res.json({pending,calendarIssues:issues,notifications,workersWithoutPush:noPush,emailConfigured:require('../services/email.service').isConfigured()});
+ }catch(e){next(e);}
+});
+router.post('/team/:businessId/notifications/:id/retry',(req,res,next)=>{
+ try{if(!manages(req,res))return;const row=db.prepare('SELECT n.id FROM booking_notifications n JOIN bookings b ON b.id=n.booking_id WHERE n.id=? AND b.business_id=? AND n.sent_at IS NULL').get(Number(req.params.id),req.params.businessId);if(!row)return res.status(404).json({error:'Queued notification not found.'});db.prepare('UPDATE booking_notifications SET next_attempt_at=NULL WHERE id=?').run(row.id);res.json({success:true});}catch(e){next(e);}
+});
+router.post('/team/:businessId/bookings/:id/reconcile',async(req,res,next)=>{try{if(!manages(req,res))return;res.json(await require('../services/bookingChanges.service').reconcile(businesses.getById(req.params.businessId),Number(req.params.id)));}catch(e){next(e);}});
+router.get('/team/:businessId/bookings/:id',(req,res,next)=>{
+ try{const row=require('../services/bookingChanges.service').get(Number(req.params.id),req.params.businessId);if(row.worker_uid!==req.user.uid&&!['manager','assistant_manager'].includes(req.membership.role))return res.status(403).json({error:'You can only view your own appointments.'});res.json(row);}catch(e){next(e);}
 });
 module.exports = router;

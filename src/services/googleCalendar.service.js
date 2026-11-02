@@ -251,6 +251,7 @@ async function createBookingEvent({
   notes,
   workerUid,
   workerName,
+  bookingId,
 }) {
   if (MOCK_MODE) {
     return {
@@ -262,6 +263,7 @@ async function createBookingEvent({
   const calendar = getCalendarClient();
 
   const event = {
+    ...(bookingId ? {id: bookingEventId(business.id,bookingId)} : {}),
     summary: `Booking — ${customerName}${workerName ? ' with ' + workerName : ''}`,
     ...(workerUid ? { extendedProperties: { private: { workerUid } } } : {}),
     description: [
@@ -285,20 +287,21 @@ async function createBookingEvent({
     // our own database, just not as a calendar invite.
   };
 
-  const res = await calendar.events.insert({
-    calendarId: business.google_calendar_id,
-    requestBody: event,
-    sendUpdates: "none",
-  });
-
-  return res.data; // includes res.data.id (google_event_id) and htmlLink
+  try {
+    const res=await calendar.events.insert({calendarId:business.google_calendar_id,requestBody:event,sendUpdates:'none'});
+    return res.data;
+  }catch(error){
+    if(bookingId && (error.code===409 || error.response?.status===409))return (await calendar.events.get({calendarId:business.google_calendar_id,eventId:event.id})).data;
+    throw error;
+  }
 }
 
 async function cancelBookingEvent(googleEventId, business) {
   if (MOCK_MODE) return;
 
   const calendar = getCalendarClient();
-  await calendar.events.delete({ calendarId: business.google_calendar_id, eventId: googleEventId });
+  try{await calendar.events.delete({ calendarId: business.google_calendar_id, eventId: googleEventId });}
+  catch(error){if(![404,410].includes(error.code||error.response?.status))throw error;}
 }
 
 // Assigned events only block their own worker; untagged external calendar
@@ -307,7 +310,7 @@ function eventBlocksWorker(event, workerUid) {
   return event.status !== 'cancelled' && event.transparency !== 'transparent' &&
     (!event.extendedProperties?.private?.workerUid || event.extendedProperties.private.workerUid === workerUid);
 }
-async function isWorkerSlotFree(startISO, endISO, business, workerUid) {
+async function isWorkerSlotFree(startISO, endISO, business, workerUid, excludeEventId) {
   if (MOCK_MODE || !business.google_calendar_id) return true;
   const calendar = getCalendarClient();
   let pageToken;
@@ -318,13 +321,34 @@ async function isWorkerSlotFree(startISO, endISO, business, workerUid) {
       timeMax: toUtcDate(endISO, BUSINESS_TIMEZONE).toISOString(),
       singleEvents: true, maxResults: 2500, pageToken,
     });
-    if ((result.data.items || []).some(event => eventBlocksWorker(event,workerUid))) return false;
+    if ((result.data.items || []).some(event => !(Array.isArray(excludeEventId)?excludeEventId:[excludeEventId]).includes(event.id) && eventBlocksWorker(event,workerUid))) return false;
     pageToken = result.data.nextPageToken;
   } while (pageToken);
   return true;
 }
 
+function bookingEventId(businessId,id){return 'b'+require('crypto').createHash('sha256').update(`${businessId}:${id}`).digest('hex');}
+async function findBookingEvent(business,id,eventId){
+  if(MOCK_MODE||!business.google_calendar_id)return null;
+  try{return (await getCalendarClient().events.get({calendarId:business.google_calendar_id,eventId:eventId||bookingEventId(business.id,id)})).data;}
+  catch(error){if([404,410].includes(error.code||error.response?.status))return null;throw error;}
+}
+async function workerBusyBlocks(date,business,uid,excludeEventId){
+ if(MOCK_MODE||!business.google_calendar_id)return [];
+ const blocks=[];let pageToken;
+ do{
+  const result=await getCalendarClient().events.list({calendarId:business.google_calendar_id,timeMin:toUtcDate(date+'T00:00:00',BUSINESS_TIMEZONE).toISOString(),timeMax:toUtcDate(date+'T23:59:59',BUSINESS_TIMEZONE).toISOString(),singleEvents:true,maxResults:2500,pageToken});
+  for(const event of result.data.items||[]){
+   if(event.id===excludeEventId||!eventBlocksWorker(event,uid))continue;
+   const start=event.start?.dateTime||(event.start?.date+'T00:00:00'),end=event.end?.dateTime||(event.end?.date+'T00:00:00');
+   blocks.push({start:toUtcDate(start,BUSINESS_TIMEZONE).getTime(),end:toUtcDate(end,BUSINESS_TIMEZONE).getTime()});
+  }
+  pageToken=result.data.nextPageToken;
+ }while(pageToken);
+ return blocks;
+}
 module.exports = {
+  workerBusyBlocks,findBookingEvent,bookingEventId,
   toUtcDate, BUSINESS_TIMEZONE, isWorkerSlotFree, eventBlocksWorker,
   isWithinBusinessHours,
   isSlotFree,

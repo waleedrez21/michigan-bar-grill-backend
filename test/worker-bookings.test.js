@@ -8,6 +8,7 @@ const db=require('../src/db/db');
 const businesses=require('../src/db/businessesRepo');
 const calendar=require('../src/services/googleCalendar.service');
 calendar.isWorkerSlotFree=async()=>true;
+calendar.workerBusyBlocks=async()=>[];
 calendar.createBookingEvent=async()=>{await new Promise(resolve=>setTimeout(resolve,10));return {id:'event-'+Math.random(),htmlLink:'https://example.test/event'};};
 require('../src/services/firebaseAdmin.service').verifyIdToken=async uid=>({uid});
 const service=require('../src/services/workerBooking.service');

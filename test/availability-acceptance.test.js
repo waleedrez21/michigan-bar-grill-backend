@@ -10,7 +10,7 @@ let events=0;
 calendar.isWorkerSlotFree=async()=>true;
 calendar.createBookingEvent=async()=>{events++;return {id:'google-'+events};};
 const firebase=require('../src/services/firebaseAdmin.service');
-firebase.verifyIdToken=async uid=>({uid});firebase.userEmail=async uid=>uid+'@example.test';
+firebase.verifyIdToken=async uid=>({uid});firebase.sendPush=async()=>({sent:true});firebase.userEmail=async uid=>uid+'@example.test';
 const email=require('../src/services/email.service');
 const deliveries=[];
 email.sendBookingUpdate=async message=>{deliveries.push(message);return {sent:true};};
@@ -30,6 +30,7 @@ test('saved availability, pending holds, assigned-worker decisions, expiry and s
   db.prepare('INSERT INTO business_members(business_id,uid,role,accepts_bookings) VALUES(?,?,?,1)').run(b.id,uid,role);
   db.prepare('INSERT INTO user_profiles(uid,first_name,last_name) VALUES(?,?,?)').run(uid,uid,'Smith');
  }
+ db.prepare('INSERT INTO push_tokens(token,uid,updated_at) VALUES(?,?,?)').run('worker-test-token','worker',new Date().toISOString());
  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
  const base=`http://127.0.0.1:${server.address().port}`;
  const http=(route,uid,method='GET',body)=>fetch(base+route,{method,headers:{'Content-Type':'application/json','X-API-Key':'key',...(uid?{Authorization:'Bearer '+uid}:{})},...(body?{body:JSON.stringify(body)}:{})});

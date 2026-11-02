@@ -36,11 +36,11 @@ function buildSystemPrompt(business) {
 Today's date in America/Toronto is ${new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(today)}.
 Business facts: address ${info.address}; phone ${info.phone}; hours ${info.hours}; about ${info.about}.
 This business books appointments with individual workers, not a banquet hall. Do not offer food ordering.
-Use list_workers to retrieve real workers; never invent staff names or IDs. Ask whether the customer wants a specific worker or has no preference.
+Use list_services to retrieve real services, prices, durations and eligible workers. When services exist, ask the customer to choose one and pass its exact serviceId to check_availability and create_booking. The server determines the end time and price from the service. Never invent prices or durations. Use list_workers to retrieve real workers; never invent staff names or IDs. Ask whether the customer wants a specific worker or has no preference.
 When a worker is requested, pass workerName exactly as the customer requested to check_availability and create_booking; resolve the exact workerUid from list_workers too. If several workers share a name, ask for the full name. Never silently substitute another worker.
 For no preference, omit workerUid and workerName and the server selects an available worker. Tell the customer which worker received the request from the successful tool result.
-Collect the customer's name, email address for status updates, desired date, start time and duration/end time. Phone is optional. Ask what service they want and store it in notes; do not invent service lengths or prices.
-Always call check_availability before offering a time. Its slots are one-hour windows; when booking a different duration, the server checks the entire requested interval again.
+Collect the customer's name, email address for status updates, desired date, start time and duration/end time. Phone is optional. If the catalog is empty, ask for their desired service and duration and store details in notes.
+Always call check_availability before offering a time. Pass serviceId when checking availability; those slots cover the complete service duration.
 Use returned labels as local business times. Only call create_booking after the customer agrees to the appointment details and worker preference. A success=true result with status=pending_worker means a REQUEST, not a confirmed appointment. Tell the customer it awaits worker acceptance, mention the response deadline in business local time, and that they will receive email updates. Only status=confirmed is a confirmed appointment. Never claim a pending request is confirmed. If the requested worker is unavailable, offer another time or ask permission to choose another worker.
 Be concise, friendly and use plain text. Do not expose internal tool IDs or narrate internal reasoning.`;
   }
@@ -89,6 +89,7 @@ YOUR JOB:
 
 // OpenAI-compatible "function" tool schema (DeepSeek uses this same shape).
 const tools = [
+  {type:'function',function:{name:'list_services',description:'List real services, prices, durations and eligible worker IDs.',parameters:{type:'object',properties:{}}}},
   {type:'function',function:{name:'list_workers',description:'List workers who accept appointments at this business. Use these exact IDs and names.',parameters:{type:'object',properties:{}}}},
   {
     type: "function",
@@ -100,6 +101,7 @@ const tools = [
         type: "object",
         properties: {
           date: { type: "string", description: "Date to check, formatted YYYY-MM-DD" },
+          serviceId: {type:'string',description:'Exact service ID from list_services, when configured.'},
           workerUid: {type:'string',description:'Exact worker UID from list_workers, when requested.'},
           workerName: {type:'string',description:'Worker name the customer explicitly requested. Never substitute another name.'},
         },
@@ -116,6 +118,7 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
+          serviceId: {type:'string',description:'Exact service ID from list_services, when configured.'},
           workerUid: {type:'string',description:'Exact worker UID from list_workers, if requested.'},
           workerName: {type:'string',description:'The name the customer explicitly requested, if any.'},
           customerName: { type: "string" },
@@ -149,6 +152,7 @@ const tools = [
 ];
 
 async function runTool(name, input, business) {
+  if(name==='list_services')return require('./appointmentCatalog.service').list(business.id);
   if (name === 'list_workers') return workerBookings.workers(business.id);
   if (name === "check_availability") {
     if(workerBookings.staffBusiness(business)) {
@@ -238,7 +242,7 @@ async function chat(business, history, userMessage) {
     const response = await deepseek.chat.completions.create({
       model: MODEL,
       messages,
-      tools: workerBookings.staffBusiness(business) ? tools.filter(tool=>tool.function.name !== 'add_to_cart') : tools.filter(tool=>tool.function.name !== 'list_workers'),
+      tools: workerBookings.staffBusiness(business) ? tools.filter(tool=>tool.function.name !== 'add_to_cart') : tools.filter(tool=>!['list_workers','list_services'].includes(tool.function.name)),
       tool_choice: "auto",
     });
 
