@@ -141,3 +141,14 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_business_members_uid ON business_members(uid);
 `);
+
+if (!columnExists('business_members', 'accepts_bookings')) {
+  db.exec('ALTER TABLE business_members ADD COLUMN accepts_bookings INTEGER NOT NULL DEFAULT 0');
+}
+if (!columnExists('bookings', 'worker_uid')) {
+  db.exec('ALTER TABLE bookings ADD COLUMN worker_uid TEXT');
+}
+if (!columnExists('bookings', 'worker_name')) {
+  db.exec('ALTER TABLE bookings ADD COLUMN worker_name TEXT');
+}
+db.exec('CREATE INDEX IF NOT EXISTS idx_bookings_worker ON bookings(business_id, worker_uid, status)');

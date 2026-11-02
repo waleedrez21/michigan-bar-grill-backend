@@ -60,12 +60,12 @@ router.get('/team/:businessId/members', async (req, res, next) => {
         }
       }
     })();
-  const rows = db.prepare(`SELECT m.uid, m.role, m.joined_at, p.first_name, p.last_name, p.bio
+  const rows = db.prepare(`SELECT m.uid, m.role, m.accepts_bookings, m.joined_at, p.first_name, p.last_name, p.bio
     FROM business_members m LEFT JOIN user_profiles p ON p.uid=m.uid
     WHERE m.business_id=? ORDER BY CASE m.role WHEN 'manager' THEN 0 WHEN 'assistant_manager' THEN 1 ELSE 2 END,
       p.first_name COLLATE NOCASE, p.last_name COLLATE NOCASE, m.uid`).all(req.params.businessId);
   // Phone numbers are private profile details and are not in the directory.
-  res.json(rows.map(r => ({ uid:r.uid, role:r.role, firstName:r.first_name || '', lastName:r.last_name || '', bio:r.bio || '' })));
+  res.json(rows.map(r => ({ uid:r.uid, role:r.role, acceptsBookings:Boolean(r.accepts_bookings), firstName:r.first_name || '', lastName:r.last_name || '', bio:r.bio || '' })));
   } catch (error) { next(error); }
 });
 router.patch('/team/:businessId/members/:uid/role', (req, res) => {
@@ -86,5 +86,15 @@ router.patch('/team/:businessId/members/:uid/role', (req, res) => {
     return [200, { success:true }];
   })();
   res.status(result[0]).json(result[1]);
+});
+router.patch('/team/:businessId/members/:uid/booking-settings', (req,res) => {
+  if(req.membership.role !== 'manager') return res.status(403).json({error:'Only managers can configure appointment workers.'});
+  if(typeof req.body.acceptsBookings !== 'boolean') return res.status(400).json({error:'acceptsBookings must be true or false.'});
+  const target=member(req.params.businessId,req.params.uid);
+  if(!target) return res.status(404).json({error:'Member not found.'});
+  const person=profile(req.params.uid);
+  if(req.body.acceptsBookings && (!person.firstName.trim() || !person.lastName.trim())) return res.status(422).json({error:'This member must save their first and last name in Profile before taking appointments.'});
+  db.prepare('UPDATE business_members SET accepts_bookings=? WHERE business_id=? AND uid=?').run(req.body.acceptsBookings?1:0,req.params.businessId,req.params.uid);
+  res.json({success:true});
 });
 module.exports = router;

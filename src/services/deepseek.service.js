@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const calendarService = require("./googleCalendar.service");
+const workerBookings = require("./workerBooking.service");
 const bookingsRepo = require("../db/bookingsRepo");
 const businessesRepo = require("../db/businessesRepo");
 const menuRepo = require("../db/menuRepo");
@@ -30,6 +31,19 @@ function buildSystemPrompt(business) {
     ? orderableMenu.map((i) => `- ${i.name} (id: ${i.id}) — $${i.price}`).join("\n")
     : "(No items are currently orderable online — direct customers to call in an order.)";
 
+  if (workerBookings.staffBusiness(business)) {
+    return `You are the appointment booking assistant for ${business.name}, a ${business.business_type}.
+Today's date in America/Toronto is ${new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(today)}.
+Business facts: address ${info.address}; phone ${info.phone}; hours ${info.hours}; about ${info.about}.
+This business books appointments with individual workers, not a banquet hall. Do not offer food ordering.
+Use list_workers to retrieve real workers; never invent staff names or IDs. Ask whether the customer wants a specific worker or has no preference.
+When a worker is requested, pass workerName exactly as the customer requested to check_availability and create_booking; resolve the exact workerUid from list_workers too. If several workers share a name, ask for the full name. Never silently substitute another worker.
+For no preference, omit workerUid and workerName and the server selects an available worker. Tell the customer who was assigned from the successful tool result.
+Collect the customer's name, phone or email, desired date, start time and duration/end time. Ask what service they want and store it in notes; do not invent service lengths or prices.
+Always call check_availability before offering a time. Its slots are one-hour windows; when booking a different duration, the server checks the entire requested interval again.
+Use returned labels as local business times. Only call create_booking after the customer agrees to the appointment details and worker preference. Never claim confirmation unless success=true. If the requested worker is unavailable, offer another time or ask permission to choose another worker.
+Be concise, friendly and use plain text. Do not expose internal tool IDs or narrate internal reasoning.`;
+  }
   return `You are the reservations, ordering & information assistant for ${business.name}.
 
 TODAY'S DATE: ${todayLabel} (${todayISO}). Always use this as the actual current date — never guess or infer it from anything else. When a customer says "tomorrow," "this Friday," "next week," etc., calculate the exact date from THIS date, not from any date you might otherwise assume.
@@ -75,16 +89,19 @@ YOUR JOB:
 
 // OpenAI-compatible "function" tool schema (DeepSeek uses this same shape).
 const tools = [
+  {type:'function',function:{name:'list_workers',description:'List workers who accept appointments at this business. Use these exact IDs and names.',parameters:{type:'object',properties:{}}}},
   {
     type: "function",
     function: {
       name: "check_availability",
       description:
-        "Check the banquet hall's real availability for a specific date. Returns open business hours and which 1-hour windows are free or busy. Always call this before offering times to a customer.",
+        "Check real booking availability for a specific date. Returns open business hours and which 1-hour windows are free or busy. Always call this before offering times to a customer.",
       parameters: {
         type: "object",
         properties: {
           date: { type: "string", description: "Date to check, formatted YYYY-MM-DD" },
+          workerUid: {type:'string',description:'Exact worker UID from list_workers, when requested.'},
+          workerName: {type:'string',description:'Worker name the customer explicitly requested. Never substitute another name.'},
         },
         required: ["date"],
       },
@@ -95,10 +112,12 @@ const tools = [
     function: {
       name: "create_booking",
       description:
-        "Create a confirmed banquet hall booking on the calendar. Only call this after the customer has confirmed a specific date and time that was verified as free via check_availability, and you have their name plus phone or email.",
+        "Create a confirmed appointment or banquet hall booking. Only call this after the customer has confirmed a specific date and time that was verified as free via check_availability, and you have their name plus phone or email.",
       parameters: {
         type: "object",
         properties: {
+          workerUid: {type:'string',description:'Exact worker UID from list_workers, if requested.'},
+          workerName: {type:'string',description:'The name the customer explicitly requested, if any.'},
           customerName: { type: "string" },
           customerEmail: { type: "string" },
           customerPhone: { type: "string" },
@@ -130,11 +149,20 @@ const tools = [
 ];
 
 async function runTool(name, input, business) {
+  if (name === 'list_workers') return workerBookings.workers(business.id);
   if (name === "check_availability") {
+    if(workerBookings.staffBusiness(business)) {
+      try { return await workerBookings.availability(input.date,business,input); }
+      catch(error) { if(error.publicMessage) return {success:false,error:error.publicMessage};throw error; }
+    }
     return await calendarService.getAvailabilityForDate(input.date, business);
   }
 
   if (name === "create_booking") {
+    if(workerBookings.staffBusiness(business)) {
+      try { return await workerBookings.create(business,input,'agent'); }
+      catch(error) { if(error.publicMessage) return {success:false,error:error.publicMessage};throw error; }
+    }
     if (!calendarService.isWithinBusinessHours(input.startDateTime, input.endDateTime, business)) {
       return { success: false, error: "Requested time is outside business hours or on a closed day." };
     }
@@ -174,6 +202,7 @@ async function runTool(name, input, business) {
 
   if (name === "add_to_cart") {
     const menuItem = menuRepo.findMenuItem(business, input.itemId);
+    if (workerBookings.staffBusiness(business)) return {success:false,error:'Food ordering is not available for this appointment business.'};
     if (!menuItem) {
       return { success: false, error: `No menu item with id "${input.itemId}" was found.` };
     }
@@ -209,7 +238,7 @@ async function chat(business, history, userMessage) {
     const response = await deepseek.chat.completions.create({
       model: MODEL,
       messages,
-      tools,
+      tools: workerBookings.staffBusiness(business) ? tools.filter(tool=>tool.function.name !== 'add_to_cart') : tools.filter(tool=>tool.function.name !== 'list_workers'),
       tool_choice: "auto",
     });
 
@@ -254,4 +283,4 @@ async function chat(business, history, userMessage) {
   };
 }
 
-module.exports = { chat };
+module.exports = { chat, runTool };

@@ -30,3 +30,49 @@ legacy by-code lookup remains for their existing business access.
 Validation: `npm ci && node --test test/*.test.js` (Node 22). Tests stub Firebase token
 verification but exercise HTTP routing, SQL migrations/transactions, role enforcement,
 creator protection, cross-business isolation, profile validation and private-field filtering.
+
+## Worker appointment routing
+
+Non-restaurant businesses with a saved business type now use individual-worker
+appointments. Managers enable **Allow appointment bookings** in each member's Team
+menu (including themselves if they provide services). New and existing members are
+disabled by default so back-office staff are not assigned customers accidentally.
+Members must save first and last names in Profile before being enabled.
+
+The public website and assistant share one assignment/reservation service:
+
+- GET /api/bookings/workers exposes only eligible worker IDs and names.
+- GET /api/bookings/availability?date=YYYY-MM-DD supports workerUid or workerName.
+- POST /api/bookings supports workerUid / workerName. An explicitly requested
+  worker is never replaced by another when unavailable. Duplicate first names need
+  a full name. No preference picks an available worker, prioritizing the smallest
+  number of appointments that day, with a stable UID tie-break.
+- The assistant lists real workers, asks the customer's preference and checks
+  availability before confirming. Restaurant ordering/banquet behavior remains.
+- GET /api/bookings now requires Firebase identity AND a business API key. Default
+  scope=mine returns only the signed-in member's confirmed appointments. Managers
+  and assistant managers may use scope=team and optionally workerUid. Shared-key
+  callers cannot read customer schedules. Old app versions must update.
+- PATCH /api/team/:businessId/members/:uid/booking-settings with acceptsBookings
+  is manager-only. Disabling new appointments preserves existing assignments.
+
+Workers' My bookings starts on today; managers/assistant managers can switch to
+Team schedule. The week/day selector and appointment detail show assigned names,
+and use America/Toronto consistently with the existing business-hours system.
+Hours currently follow the business opening hours; individual shifts, leave,
+service catalogs and worker-specific durations are not configured in this version.
+
+SQLite checks the complete requested interval and holds a reservation before any
+calendar network call, including in mock mode. Assigned shared-calendar events are
+tagged with workerUid and only block that worker. Untagged external Google events
+and old unassigned SQLite bookings conservatively block the whole business. Old
+bookings are not guessed onto workers. Businesses without a linked Google Calendar
+can book directly into the app. Calendar write failures retain a blocked reservation
+marked calendar_review and do not tell the customer it is confirmed; managers see
+these entries and must reconcile the Google event/database before releasing them.
+Reservations left pending after a server crash also stay blocked for manager review.
+
+Tests cover preferred workers, simultaneous bookings by different workers,
+concurrent requests for the same worker, partial overlaps, adjacent appointments,
+UTC/local equivalence, name ambiguity, calendar uncertainty, worker configuration,
+assistant tool integration, website creation and schedule authorization.

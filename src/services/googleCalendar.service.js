@@ -249,6 +249,8 @@ async function createBookingEvent({
   startISO,
   endISO,
   notes,
+  workerUid,
+  workerName,
 }) {
   if (MOCK_MODE) {
     return {
@@ -260,14 +262,16 @@ async function createBookingEvent({
   const calendar = getCalendarClient();
 
   const event = {
-    summary: `Booking — ${customerName}`,
+    summary: `Booking — ${customerName}${workerName ? ' with ' + workerName : ''}`,
+    ...(workerUid ? { extendedProperties: { private: { workerUid } } } : {}),
     description: [
+      workerName ? `Worker: ${workerName}` : null,
       `Party size: ${partySize || "n/a"}`,
       `Phone: ${customerPhone || "n/a"}`,
       `Email: ${customerEmail || "n/a"}`,
       notes ? `Notes: ${notes}` : null,
       "",
-      "Booked via AI agent — please follow up to confirm catering & deposit.",
+      workerUid ? "Appointment booked with WorkBay." : "Booked via AI agent — please follow up to confirm catering & deposit.",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -297,7 +301,31 @@ async function cancelBookingEvent(googleEventId, business) {
   await calendar.events.delete({ calendarId: business.google_calendar_id, eventId: googleEventId });
 }
 
+// Assigned events only block their own worker; untagged external calendar
+// events block everyone (e.g. a shop closure). No customer data is returned.
+function eventBlocksWorker(event, workerUid) {
+  return event.status !== 'cancelled' && event.transparency !== 'transparent' &&
+    (!event.extendedProperties?.private?.workerUid || event.extendedProperties.private.workerUid === workerUid);
+}
+async function isWorkerSlotFree(startISO, endISO, business, workerUid) {
+  if (MOCK_MODE || !business.google_calendar_id) return true;
+  const calendar = getCalendarClient();
+  let pageToken;
+  do {
+    const result = await calendar.events.list({
+      calendarId: business.google_calendar_id,
+      timeMin: toUtcDate(startISO, BUSINESS_TIMEZONE).toISOString(),
+      timeMax: toUtcDate(endISO, BUSINESS_TIMEZONE).toISOString(),
+      singleEvents: true, maxResults: 2500, pageToken,
+    });
+    if ((result.data.items || []).some(event => eventBlocksWorker(event,workerUid))) return false;
+    pageToken = result.data.nextPageToken;
+  } while (pageToken);
+  return true;
+}
+
 module.exports = {
+  toUtcDate, BUSINESS_TIMEZONE, isWorkerSlotFree, eventBlocksWorker,
   isWithinBusinessHours,
   isSlotFree,
   getAvailabilityForDate,
