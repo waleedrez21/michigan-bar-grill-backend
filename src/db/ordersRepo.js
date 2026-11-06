@@ -31,15 +31,23 @@ function insertOrder({
 }
 
 function markPaidBySessionId(stripeSessionId) {
-  db.prepare(
-    `UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE stripe_session_id = ?`
-  ).run(stripeSessionId);
+  return db.prepare(
+    `UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP
+     WHERE stripe_session_id = ? AND status = 'pending'
+     RETURNING *`
+  ).get(stripeSessionId);
 }
 
-function markCompleted(orderId, businessId) {
-  db.prepare(
-    `UPDATE orders SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND business_id = ?`
-  ).run(orderId, businessId);
+function transitionOrder(orderId, businessId, from, to) {
+  return db.transaction(() => {
+    const order = db.prepare('SELECT status FROM orders WHERE id = ? AND business_id = ?').get(orderId, businessId);
+    if (!order) return 404;
+    if (order.status === to) return 200;
+    if (order.status !== from) return 409;
+    db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND business_id = ?')
+      .run(to, orderId, businessId);
+    return 200;
+  })();
 }
 
 function getByStripeSessionId(stripeSessionId) {
@@ -54,7 +62,7 @@ function getByStripeSessionId(stripeSessionId) {
 function listOrders(businessId, { activeOnly, previousOnly } = {}) {
   if (activeOnly) {
     return db
-      .prepare(`SELECT * FROM orders WHERE business_id = ? AND status = 'paid' ORDER BY created_at DESC`)
+      .prepare(`SELECT * FROM orders WHERE business_id = ? AND status IN ('paid', 'accepted') ORDER BY created_at DESC`)
       .all(businessId);
   }
   if (previousOnly) {
@@ -67,4 +75,4 @@ function listOrders(businessId, { activeOnly, previousOnly } = {}) {
     .all(businessId);
 }
 
-module.exports = { insertOrder, markPaidBySessionId, markCompleted, getByStripeSessionId, listOrders };
+module.exports = { insertOrder, markPaidBySessionId, transitionOrder, getByStripeSessionId, listOrders };

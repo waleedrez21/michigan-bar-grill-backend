@@ -57,20 +57,31 @@ function listOrders(req, res, next) {
     const { status } = req.query; // 'active' | 'previous' | undefined
     const options =
       status === "active" ? { activeOnly: true } : status === "previous" ? { previousOnly: true } : {};
-    res.json(ordersRepo.listOrders(req.business.id, options));
+    res.json(ordersRepo.listOrders(req.business.id, options).map(order => ({
+      ...order,
+      status: order.status === "paid" ? "pending" : order.status,
+      paymentConfirmed: ["paid", "accepted", "completed"].includes(order.status),
+    })));
   } catch (err) {
     next(err);
   }
 }
 
-function completeOrder(req, res, next) {
-  try {
-    ordersRepo.markCompleted(req.params.id, req.business.id);
-    res.json({ success: true });
-  } catch (err) {
-    next(err);
-  }
+function orderTransition(from, to) {
+  return (req, res, next) => {
+    try {
+      const status = ordersRepo.transitionOrder(req.params.id, req.business.id, from, to);
+      if (status === 404) return res.status(404).json({ error: "Order not found." });
+      if (status === 409) return res.status(409).json({ error: `Order cannot be marked ${to} in its current state.` });
+      res.json({ success: true, status: to });
+    } catch (err) {
+      next(err);
+    }
+  };
 }
+
+const acceptOrder = orderTransition("paid", "accepted");
+const completeOrder = orderTransition("accepted", "completed");
 
 /**
  * GET /api/orders/by-session/:sessionId
@@ -100,4 +111,4 @@ function getBySession(req, res, next) {
   }
 }
 
-module.exports = { getMenu, postCheckout, listOrders, completeOrder, getBySession };
+module.exports = { getMenu, postCheckout, listOrders, acceptOrder, completeOrder, getBySession };
