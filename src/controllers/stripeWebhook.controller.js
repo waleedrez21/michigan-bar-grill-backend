@@ -1,7 +1,7 @@
 const stripeService = require("../services/stripe.service");
 const ordersRepo = require("../db/ordersRepo");
 
-async function handleStripeWebhook(req, res) {
+async function handleStripeWebhook(req, res, next) {
   const signature = req.headers["stripe-signature"];
 
   let event;
@@ -15,14 +15,26 @@ async function handleStripeWebhook(req, res) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.type === "checkout.session.completed") {
+  if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
     const session = event.data.object;
-    ordersRepo.markPaidBySessionId(session.id);
-    console.log(`[stripe webhook] Order paid — session ${session.id}`);
+    if (session.payment_status === "paid") {
+      let order;
+      try {
+        order = ordersRepo.markPaidBySessionId(session.id);
+      } catch (err) {
+        return next(err);
+      }
+      // Only the request that advances the order from unpaid can send an alarm.
+      if (order) {
+        try {
+          await require("../services/orderAlerts.service").pushNewOrder(order, session);
+        } catch (err) {
+          console.error("[order push] Delivery failed for order", order.id);
+        }
+      }
+    }
   }
 
-  // Always 200 quickly so Stripe doesn't keep retrying — even for event
-  // types we don't act on.
   res.json({ received: true });
 }
 

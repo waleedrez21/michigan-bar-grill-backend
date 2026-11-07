@@ -72,7 +72,39 @@ test('release security boundaries and resilient privacy cleanup',async()=>{
    assert.equal((await req(`/orders/${id}/complete`,null,'POST',{})).status,401);
    assert.equal((await req(`/orders/${id}/complete`,'other','POST',{})).status,403);
    assert.equal((await req('/orders','worker')).status,200);
+   assert.equal((await req(`/orders/${id}/complete`,'worker','POST',{})).status,409);
+   assert.equal((await req(`/orders/${id}/accept`,'worker','POST',{})).status,200);
    assert.equal((await req(`/orders/${id}/complete`,'worker','POST',{})).status,200);
+  });
+  await test('Stripe confirms payment once and only alerts devices in that business',async()=>{
+   const orders=require('../src/db/ordersRepo');
+   const stripe=require('../src/services/stripe.service');
+   const webhook=require('../src/controllers/stripeWebhook.controller').handleStripeWebhook;
+   const id=orders.insertOrder({businessId:'shop',stripeSessionId:'test-order-payment',items:[{quantity:1,name:'Steak & Eggs'}],subtotalCents:1799});
+   db.prepare("INSERT INTO push_tokens(token,uid,updated_at) VALUES('shop-order-token','manager',CURRENT_TIMESTAMP),('other-order-token','other',CURRENT_TIMESTAMP)").run();
+   const originalPush=firebase.sendPush, originalConstruct=stripe.constructWebhookEvent;
+   const pushes=[];
+   firebase.sendPush=async (...args)=>{pushes.push(args);return {sent:true};};
+   const session={id:'test-order-payment',payment_status:'unpaid',currency:'cad',amount_total:1799};
+   let type='checkout.session.completed';
+   stripe.constructWebhookEvent=()=>({type,data:{object:session}});
+   const deliver=()=>webhook({headers:{}},{json:()=>{}},err=>{throw err;});
+   try {
+    await deliver();
+    assert.equal(pushes.length,0);
+    session.payment_status='paid';
+    type='checkout.session.async_payment_succeeded';
+    await Promise.all([deliver(),deliver()]);
+    assert.deepEqual(pushes,[['shop-order-token',{title:'WorkBay',body:'New order — $17.99 — 1x Steak & Eggs'},{businessId:'shop',orderId:String(id)}]]);
+    assert.equal(orders.transitionOrder(id,'shop','paid','accepted'),200);
+    await deliver();
+    assert.equal(orders.getByStripeSessionId(session.id).status,'accepted');
+    assert.equal(pushes.length,1);
+   } finally {
+    stripe.constructWebhookEvent=originalConstruct;
+    firebase.sendPush=originalPush;
+    db.prepare("DELETE FROM push_tokens WHERE token IN ('shop-order-token','other-order-token')").run();
+   }
   });
   await test('clock records use server identity/time and tenant scope',async()=>{
    assert.equal((await req('/team/shop/me/clock','new','POST',{action:'in',uid:'manager'})).status,403);
