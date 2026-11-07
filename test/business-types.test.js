@@ -29,7 +29,7 @@ test('migration and business type HTTP contract', async () => {
   // Running startup migrations again must be safe.
   delete require.cache[require.resolve('../src/db/db')];
   const reopened = require('../src/db/db');
-  reopened.close();
+  // Keep the reopened connection alive until requests finish.
   const app = express();
   app.use(express.json());
   app.use('/api/businesses', routes);
@@ -43,7 +43,7 @@ test('migration and business type HTTP contract', async () => {
       assert.equal(response.status, 201);
       const business = await response.json();
       assert.equal(business.businessType, businessType);
-      const lookup = await fetch(`${base}/by-code/${business.code}`);
+      const lookup = await fetch(`${base}/by-code/${business.code}`,{headers:{Authorization:"Bearer test"}});
       assert.equal(lookup.status, 200);
       assert.equal((await lookup.json()).businessType, businessType);
     }
@@ -56,10 +56,11 @@ test('migration and business type HTTP contract', async () => {
       assert.equal((await response.json()).businessType,null);
     }
     const old = await fetch(`${base}/by-code/OLD-1234`);
-    assert.equal((await old.json()).businessType,null);
-    assert.equal((await fetch(`${base}/by-code/UNKNOWN`)).status,404);
+    assert.equal(old.status,401);
+    assert.equal((await fetch(`${base}/by-code/UNKNOWN`,{headers:{Authorization:'Bearer test'}})).status,404);
   } finally {
     await new Promise(resolve => server.close(resolve));
+    reopened.close();
     db.close();
     fs.rmSync(directory, {recursive:true,force:true});
   }

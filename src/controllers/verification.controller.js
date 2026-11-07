@@ -18,8 +18,9 @@ async function postSend(req, res, next) {
       return res.status(400).json({ error: "A valid email is required." });
     }
 
+    const purpose=req.body.purpose==='privacy'?'privacy':'signup';
     // Simple cooldown — don't allow spamming the same email with resends.
-    const existing = verificationRepo.getLatestForEmail(email);
+    const existing = verificationRepo.getLatestForEmail(email,purpose);
     if (existing) {
       const secondsSinceLast = (Date.now() - new Date(existing.created_at + "Z").getTime()) / 1000;
       if (secondsSinceLast < 45) {
@@ -27,7 +28,7 @@ async function postSend(req, res, next) {
       }
     }
 
-    const { code } = verificationRepo.insertCode(email);
+    const { code } = verificationRepo.insertCode(email,purpose);
     const result = await emailService.sendVerificationCode({ email, code });
 
     res.json({ sent: result.sent });
@@ -55,16 +56,21 @@ async function postConfirm(req, res, next) {
     if (row.attempts >= 5) {
       return res.status(429).json({ error: "Too many incorrect attempts. Please request a new code." });
     }
-    if (new Date(row.expires_at + "Z").getTime() < Date.now()) {
+    if (row.verified || !Number.isFinite(Date.parse(row.expires_at)) || Date.parse(row.expires_at) <= Date.now()) {
       return res.status(400).json({ error: "That code has expired. Please request a new one." });
     }
-    if (row.code !== String(code).trim()) {
+    if (!verificationRepo.checkCode(row,String(code))) {
       verificationRepo.incrementAttempts(row.id);
       return res.status(400).json({ error: "Incorrect code. Please try again." });
     }
 
-    verificationRepo.markVerified(row.id);
-    res.json({ verified: true });
+    const crypto=require('node:crypto'),db=require('../db/db');
+    const verificationToken=crypto.randomBytes(32).toString('hex');
+    db.transaction(()=>{
+      verificationRepo.markVerified(row.id);
+      db.prepare('INSERT INTO email_verification_grants(token_hash,email,expires_at) VALUES(?,?,?)').run(crypto.createHash('sha256').update(verificationToken).digest('hex'),email.toLowerCase().trim(),new Date(Date.now()+10*60000).toISOString());
+    })();
+    res.json({ verified: true, verificationToken });
   } catch (err) {
     next(err);
   }

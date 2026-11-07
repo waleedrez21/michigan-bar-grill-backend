@@ -264,19 +264,9 @@ async function createBookingEvent({
 
   const event = {
     ...(bookingId ? {id: bookingEventId(business.id,bookingId)} : {}),
-    summary: `Booking — ${customerName}${workerName ? ' with ' + workerName : ''}`,
+    summary: bookingId ? `WorkBay appointment #${bookingId}` : 'WorkBay appointment',
     ...(workerUid ? { extendedProperties: { private: { workerUid } } } : {}),
-    description: [
-      workerName ? `Worker: ${workerName}` : null,
-      `Party size: ${partySize || "n/a"}`,
-      `Phone: ${customerPhone || "n/a"}`,
-      `Email: ${customerEmail || "n/a"}`,
-      notes ? `Notes: ${notes}` : null,
-      "",
-      workerUid ? "Appointment booked with WorkBay." : "Booked via AI agent — please follow up to confirm catering & deposit.",
-    ]
-      .filter(Boolean)
-      .join("\n"),
+    description: 'Open WorkBay for appointment details. Customer contact information is kept in WorkBay.',
     start: toGoogleEventDateTime(startISO, BUSINESS_TIMEZONE),
     end: toGoogleEventDateTime(endISO, BUSINESS_TIMEZONE),
     // NOTE: deliberately NOT including an "attendees" field. Basic service
@@ -356,3 +346,16 @@ module.exports = {
   createBookingEvent,
   cancelBookingEvent,
 };
+
+async function redactBookingEvent(eventId,business,{customer,worker}){
+ if(MOCK_MODE)return;
+ try{
+  const calendar=getCalendarClient();
+  const existing=(await calendar.events.get({calendarId:business.google_calendar_id,eventId})).data;
+  if(existing.status==='cancelled')return;
+  // Historical events are reduced to a private booking reference, no contacts/notes/names.
+  const privateFields={...(existing.extendedProperties?.private||{})};if(worker)privateFields.workerUid=null;
+  await calendar.events.patch({calendarId:business.google_calendar_id,eventId,requestBody:{summary:'WorkBay appointment',description:'Open WorkBay for details.',extendedProperties:{private:privateFields}}});
+ }catch(error){if(![404,410].includes(error.code||error.response?.status))throw error;}
+}
+module.exports.redactBookingEvent=redactBookingEvent;

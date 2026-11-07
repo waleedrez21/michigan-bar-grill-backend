@@ -264,7 +264,7 @@ async function chat(business, history, userMessage) {
           cartActions.push(result.cartAction);
         }
       } catch (err) {
-        console.error(`[deepseek] Tool ${toolCall.function.name} failed:`, err);
+        console.error('[deepseek] Tool action failed');
         result = {
           success: false,
           error: "That action couldn't be completed due to a technical issue. Apologize to the customer and suggest calling the restaurant directly instead.",

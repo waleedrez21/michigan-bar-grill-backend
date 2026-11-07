@@ -188,3 +188,17 @@ db.exec(`
  CREATE TABLE IF NOT EXISTS push_tokens (token TEXT PRIMARY KEY,uid TEXT NOT NULL,updated_at TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS idx_push_tokens_uid ON push_tokens(uid);
 `);
+
+db.exec(`
+ CREATE TABLE IF NOT EXISTS join_requests (business_id TEXT NOT NULL,uid TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected')),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(business_id,uid));
+ CREATE TABLE IF NOT EXISTS account_deletions (uid TEXT PRIMARY KEY,requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+ CREATE TABLE IF NOT EXISTS clock_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,business_id TEXT NOT NULL,uid TEXT,clock_in TEXT NOT NULL,clock_out TEXT);
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_clock_active ON clock_sessions(business_id,uid) WHERE clock_out IS NULL;
+`);
+
+if (!columnExists('account_deletions','email')) db.exec('ALTER TABLE account_deletions ADD COLUMN email TEXT');
+if (!columnExists('chat_sessions','owner_uid')) db.exec('ALTER TABLE chat_sessions ADD COLUMN owner_uid TEXT');
+
+if (!columnExists('verification_codes','purpose')) db.exec("ALTER TABLE verification_codes ADD COLUMN purpose TEXT NOT NULL DEFAULT 'signup'");
+db.exec(`CREATE TABLE IF NOT EXISTS email_verification_grants(token_hash TEXT PRIMARY KEY,email TEXT NOT NULL,expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS privacy_requests(id TEXT PRIMARY KEY,email TEXT NOT NULL,requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);`);

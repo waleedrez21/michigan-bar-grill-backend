@@ -51,3 +51,35 @@ async function sendPush(token,notification,data){
   }
 }
 module.exports.sendPush=sendPush;
+
+async function deleteAccountData(uid,email){
+ ensureInitialized();
+ const firestore=require('firebase-admin/firestore').getFirestore();
+ const employees=await firestore.collection('employees').where('ownerID','==',uid).get();
+ const docs=new Map();
+ const collect=async(collection,field,value)=>{
+  const snapshot=await firestore.collection(collection).where(field,'==',value).get();
+  for(const doc of snapshot.docs)docs.set(doc.ref.path,doc.ref);
+ };
+ for(const collection of ['memberships','activeSessions','clockSessions']){
+  await collect(collection,'uid',uid);await collect(collection,'ownerID',uid);
+ }
+ for(const doc of employees.docs){
+  docs.set(doc.ref.path,doc.ref);
+  const code=doc.data().employeeCode;
+  if(typeof code==='string'){
+   await collect('activeSessions','employeeCode',code);
+   await collect('clockSessions','employeeCode',code);
+  }
+ }
+ const references=[...docs.values()];
+ for(let offset=0;offset<references.length;offset+=400){const batch=firestore.batch();references.slice(offset,offset+400).forEach(ref=>batch.delete(ref));await batch.commit();}
+}
+async function revokeUser(uid){ensureInitialized();try{await getAuth().revokeRefreshTokens(uid);}catch(e){if(e.code!=='auth/user-not-found')throw e;}}
+async function deleteUser(uid){ensureInitialized();try{await getAuth().deleteUser(uid);}catch(e){if(e.code!=='auth/user-not-found')throw e;}}
+module.exports.deleteAccountData=deleteAccountData;
+module.exports.revokeUser=revokeUser;
+module.exports.deleteUser=deleteUser;
+
+async function markEmailVerified(uid){ensureInitialized();await getAuth().updateUser(uid,{emailVerified:true});}
+module.exports.markEmailVerified=markEmailVerified;

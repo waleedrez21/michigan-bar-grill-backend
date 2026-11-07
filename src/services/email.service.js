@@ -39,7 +39,7 @@ async function sendContactNotification({ name, email, phone, reason, message }) 
 
 async function sendVerificationCode({ email, code }) {
   if (!isConfigured()) {
-    console.log("[email] RESEND_API_KEY not set — skipping send. Code was still generated:", code);
+    console.log("[email] Verification delivery unavailable; no code logged.");
     return { sent: false };
   }
 

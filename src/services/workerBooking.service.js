@@ -24,7 +24,7 @@ function window(start, end, business) {
 function workers(businessId) {
   return db.prepare(`SELECT m.uid, p.first_name, p.last_name FROM business_members m
     JOIN user_profiles p ON p.uid=m.uid WHERE m.business_id=? AND m.accepts_bookings=1
-    AND trim(p.first_name)<>'' AND trim(p.last_name)<>'' ORDER BY p.first_name COLLATE NOCASE, p.last_name COLLATE NOCASE, m.uid`)
+    AND NOT EXISTS (SELECT 1 FROM account_deletions d WHERE d.uid=m.uid) AND trim(p.first_name)<>'' AND trim(p.last_name)<>'' ORDER BY p.first_name COLLATE NOCASE, p.last_name COLLATE NOCASE, m.uid`)
     .all(businessId).map(row => ({uid:row.uid,name:`${row.first_name} ${row.last_name}`}));
 }
 function choosePool(business, {workerUid,workerName,serviceId} = {}) {
