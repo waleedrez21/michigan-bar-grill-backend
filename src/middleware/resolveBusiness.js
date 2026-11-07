@@ -21,4 +21,18 @@ function resolveBusiness(req, res, next) {
   next();
 }
 
+function resolvePublicBusiness(req, res, next) {
+  const businessId = req.get("X-WorkBay-Business");
+  if (!businessId) return resolveBusiness(req, res, next);
+
+  // The restaurant's public website can select this tenant on public routes.
+  // Staff routes continue to require credentials and business membership.
+  const business = businessId === "michigan-bar-grill" && businessesRepo.getById(businessId);
+  if (!business) return res.status(404).json({ error: "Public business not found." });
+
+  req.business = business;
+  next();
+}
+
 module.exports = resolveBusiness;
+module.exports.resolvePublicBusiness = resolvePublicBusiness;
