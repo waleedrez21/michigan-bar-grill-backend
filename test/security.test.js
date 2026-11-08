@@ -115,6 +115,22 @@ test('release security boundaries and resilient privacy cleanup',async()=>{
    await req('/team/shop/me/clock','worker','POST',{action:'out'});
    assert.equal((await (await req('/team/shop/me/clock','worker')).json()).clockIn,null);
   });
+  await test('weekly hours are manager-only and clip shifts at Toronto week boundaries',async()=>{
+   const route='/team/shop/clock/weekly';
+   assert.equal((await req(route,'worker')).status,403);
+   assert.equal((await req(route,'other')).status,403);
+   assert.equal((await req(route+'?weeksAgo=53','manager')).status,400);
+   assert.equal((await req(route,'manager')).status,200);
+   const add=db.prepare('INSERT INTO clock_sessions(business_id,uid,clock_in,clock_out) VALUES(?,?,?,?)');
+   const shift=add.run('shop','worker','2026-11-02T04:00:00.000Z','2026-11-02T06:30:00.000Z').lastInsertRowid;
+   try {
+    const report=require('../src/services/timeClock.service').weeklyHours('shop',0,new Date('2026-11-04T18:00:00Z'));
+    assert.equal(report.startDate,'2026-11-02');
+    assert.equal(report.totalSeconds,5400);
+    assert.equal(report.employees.find(employee=>employee.uid==='worker').totalSeconds,5400);
+    assert.equal(report.employees.find(employee=>employee.uid==='manager').totalSeconds,0);
+   } finally { db.prepare('DELETE FROM clock_sessions WHERE id=?').run(shift); }
+  });
   await test('AI requires explicit consent; sessions cannot cross business or account',async()=>{
    assert.equal((await req('/chat',null,'POST',{message:'private'})).status,428);assert.equal(aiCalls,0);
    const response=await req('/chat','worker','POST',{message:'hello',aiConsent:'2026-11-02'});assert.equal(response.status,200);const {sessionId}=await response.json();
