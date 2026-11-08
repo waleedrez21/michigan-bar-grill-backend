@@ -202,3 +202,11 @@ if (!columnExists('chat_sessions','owner_uid')) db.exec('ALTER TABLE chat_sessio
 if (!columnExists('verification_codes','purpose')) db.exec("ALTER TABLE verification_codes ADD COLUMN purpose TEXT NOT NULL DEFAULT 'signup'");
 db.exec(`CREATE TABLE IF NOT EXISTS email_verification_grants(token_hash TEXT PRIMARY KEY,email TEXT NOT NULL,expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS privacy_requests(id TEXT PRIMARY KEY,email TEXT NOT NULL,requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,completed_at TEXT);`);
+
+db.exec(`
+ CREATE TABLE IF NOT EXISTS clock_pins (
+  uid TEXT PRIMARY KEY,
+  salt TEXT NOT NULL,
+  digest TEXT NOT NULL
+ );
+`);

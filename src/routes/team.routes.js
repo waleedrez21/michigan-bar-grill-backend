@@ -121,7 +121,27 @@ router.get('/team/:businessId/clock/weekly', (req, res, next) => {
   }
 });
 router.get('/team/:businessId/me/clock',(req,res)=>res.json(require('../services/timeClock.service').get(req.params.businessId,req.user.uid)));
-router.post('/team/:businessId/me/clock',(req,res,next)=>{try{res.json(require('../services/timeClock.service').change(req.params.businessId,req.user.uid,req.body.action));}catch(error){next(error);}});
+const clockCodeLimiter = require('express-rate-limit')({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  keyGenerator: req => req.user.uid,
+  skipSuccessfulRequests: true,
+  message: { error: 'Too many clock code attempts. Try again in 15 minutes.' },
+});
+router.put('/team/:businessId/me/clock/pin', clockCodeLimiter, (req, res, next) => {
+  try {
+    const age = Date.now() / 1000 - req.user.auth_time;
+    require('../services/timeClock.service').setPIN(req.user.uid, req.body.pin, age >= 0 && age <= 300);
+    res.json({ success: true });
+  } catch (error) { next(error); }
+});
+router.post('/team/:businessId/me/clock', clockCodeLimiter, (req, res, next) => {
+  try {
+    const clock = require('../services/timeClock.service');
+    clock.verifyPIN(req.user.uid, req.body.pin);
+    res.json(clock.change(req.params.businessId, req.user.uid, req.body.action));
+  } catch (error) { next(error); }
+});
 router.get('/team/:businessId/members', async (req, res, next) => {
   try {
   const rows = db.prepare(`SELECT m.uid, m.role, m.accepts_bookings, m.joined_at, p.first_name, p.last_name, p.bio

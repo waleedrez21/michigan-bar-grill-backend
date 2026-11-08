@@ -1,5 +1,39 @@
 const db=require('../db/db');
-function get(businessId,uid){const row=db.prepare('SELECT clock_in FROM clock_sessions WHERE business_id=? AND uid=? AND clock_out IS NULL').get(businessId,uid);return {clockIn:row?.clock_in||null};}
+const { randomBytes, scryptSync, timingSafeEqual } = require('node:crypto');
+
+function clockError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  error.publicMessage = message;
+  return error;
+}
+
+function hasPIN(uid) {
+  return Boolean(db.prepare('SELECT 1 FROM clock_pins WHERE uid=?').get(uid));
+}
+
+function validPIN(pin) {
+  return typeof pin === 'string' && /^\d{6}$/.test(pin);
+}
+
+function setPIN(uid, pin, recentlySignedIn) {
+  if (!validPIN(pin)) throw clockError(400, 'Enter a six-digit clock code.');
+  if (hasPIN(uid) && !recentlySignedIn) {
+    throw clockError(403, 'Sign out and back in before resetting your clock code.');
+  }
+  const salt = randomBytes(16).toString('hex');
+  const digest = scryptSync(pin, salt, 32).toString('hex');
+  db.prepare('INSERT INTO clock_pins(uid,salt,digest) VALUES(?,?,?) ON CONFLICT(uid) DO UPDATE SET salt=excluded.salt,digest=excluded.digest').run(uid, salt, digest);
+}
+
+function verifyPIN(uid, pin) {
+  const record = db.prepare('SELECT salt,digest FROM clock_pins WHERE uid=?').get(uid);
+  if (!record) throw clockError(409, 'Set up your clock code in the updated WorkBay app.');
+  if (!validPIN(pin) || !timingSafeEqual(scryptSync(pin, record.salt, 32), Buffer.from(record.digest, 'hex'))) {
+    throw clockError(403, 'Incorrect clock code.');
+  }
+}
+function get(businessId,uid){const row=db.prepare('SELECT clock_in FROM clock_sessions WHERE business_id=? AND uid=? AND clock_out IS NULL').get(businessId,uid);return {clockIn:row?.clock_in||null,hasClockPIN:hasPIN(uid)};}
 function change(businessId,uid,action){
  if(!['in','out'].includes(action)){const e=new Error('Choose clock in or clock out.');e.status=400;e.publicMessage=e.message;throw e;}
  return db.transaction(()=>{
@@ -9,7 +43,7 @@ function change(businessId,uid,action){
  return get(businessId,uid);
  })();
 }
-module.exports={get,change};
+module.exports={get,change,setPIN,verifyPIN};
 
 function weeklyHours(businessId, weeksAgo, now = new Date()) {
   const { toUtcDate, BUSINESS_TIMEZONE } = require('./googleCalendar.service');
