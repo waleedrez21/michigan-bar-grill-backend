@@ -105,6 +105,21 @@ router.delete('/team/:businessId/members/:uid',async(req,res,next)=>{
  res.json({success:true});
  }catch(error){next(error);}
 });
+router.get('/team/:businessId/clock/weekly', (req, res, next) => {
+  if (req.membership.role !== 'manager') {
+    return res.status(403).json({ error: 'Only managers can view team hours.' });
+  }
+  const offset = req.query.weeksAgo ?? '0';
+  if (typeof offset !== 'string' || !/^\d{1,2}$/.test(offset) || Number(offset) > 52) {
+    return res.status(400).json({ error: 'Choose a week within the last 52 weeks.' });
+  }
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(require('../services/timeClock.service').weeklyHours(req.params.businessId, Number(offset)));
+  } catch (error) {
+    next(error);
+  }
+});
 router.get('/team/:businessId/me/clock',(req,res)=>res.json(require('../services/timeClock.service').get(req.params.businessId,req.user.uid)));
 router.post('/team/:businessId/me/clock',(req,res,next)=>{try{res.json(require('../services/timeClock.service').change(req.params.businessId,req.user.uid,req.body.action));}catch(error){next(error);}});
 router.get('/team/:businessId/members', async (req, res, next) => {
