@@ -76,7 +76,16 @@ function listBookings(req, res, next) {
     if(req.query.workerUid && !(team && ['manager','assistant_manager'].includes(membership.role)) && req.query.workerUid !== req.user.uid) return res.status(403).json({error:'You can only view your own appointments.'});
     require('../services/bookingLifecycle.service').expire();
     let rows=bookingsRepo.listBookings(req.business.id).filter(row=>!['cancelled','failed'].includes(row.status) && (team || ['confirmed','pending_worker'].includes(row.status)));
-    if(!team) rows=rows.filter(row=>row.worker_uid === req.user.uid);
+    if (!team) {
+      const includeShared = req.business.id === 'michigan-bar-grill' && !req.query.workerUid;
+      rows = rows.flatMap(row => {
+        if (row.worker_uid === req.user.uid) return [row];
+        if (!includeShared || row.worker_uid || row.status !== 'confirmed') return [];
+        // Staff need reservation details for service, not private contact or management data.
+        const { id, customer_name, party_size, start_time, end_time, status, source, business_id, created_at } = row;
+        return [{ id, customer_name, party_size, start_time, end_time, status, source, business_id, created_at }];
+      });
+    }
     else if(req.query.workerUid) rows=rows.filter(row=>row.worker_uid === req.query.workerUid);
     rows.sort((a,b)=>workerBookings.instant(a.start_time)-workerBookings.instant(b.start_time));
     res.json(rows);

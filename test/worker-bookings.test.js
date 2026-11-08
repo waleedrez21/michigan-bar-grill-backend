@@ -83,6 +83,24 @@ test('worker-specific bookings, conflicts, automatic assignment, assistant tools
   assert.equal((await req('/api/team-admin/team/shop/members/manager/booking-settings','manager','PATCH',{acceptsBookings:false})).status,200);
   // Public website creation shares the same assignment service.
   const web=await req('/api/bookings',null,'POST',input(15,{workerUid:'sam'}));assert.equal(web.status,201);assert.equal((await web.json()).workerUid,'sam');
+  const restaurant = business('michigan-bar-grill');
+  worker(restaurant, 'restaurant-worker', 'Restaurant', 'Worker');
+  const reservations = require('../src/db/bookingsRepo');
+  const shared = reservations.insertBooking({
+    businessId: restaurant.id, customerName: 'Banquet guest', customerEmail: 'private@example.test',
+    partySize: 12, startTime: '2030-11-06T18:00:00Z', endTime: '2030-11-06T20:00:00Z',
+  });
+  const restaurantRequest = uid => fetch(base + '/api/bookings?scope=mine', {
+    headers: { 'X-API-Key': restaurant.id, Authorization: 'Bearer ' + uid },
+  });
+  const restaurantResponse = await restaurantRequest('restaurant-worker');
+  assert.equal(restaurantResponse.status, 200);
+  const [reservation] = await restaurantResponse.json();
+  assert.equal(reservation.id, Number(shared));
+  assert.equal(reservation.party_size, 12);
+  assert.equal(reservation.customer_email, undefined);
+  assert.equal((await restaurantRequest('sam')).status, 403);
+
   // Calendar uncertainty is never confirmed and still blocks the interval.
   calendar.createBookingEvent=async()=>{throw new Error('Calendar timeout');};
   const waiting=await service.create(b,input(16,{workerUid:'sam'}));
