@@ -81,9 +81,9 @@ function listBookings(req, res, next) {
       rows = rows.flatMap(row => {
         if (row.worker_uid === req.user.uid) return [row];
         if (!includeShared || row.worker_uid || row.status !== 'confirmed') return [];
-        // Staff need reservation details for service, not private contact or management data.
-        const { id, customer_name, party_size, start_time, end_time, status, source, business_id, created_at } = row;
-        return [{ id, customer_name, party_size, start_time, end_time, status, source, business_id, created_at }];
+        // Include guest contact details and notes for staff coordinating this reservation.
+        const { id, customer_name, customer_phone, customer_email, notes, party_size, start_time, end_time, status, source, business_id, created_at } = row;
+        return [{ id, customer_name, customer_phone, customer_email, notes, party_size, start_time, end_time, status, source, business_id, created_at }];
       });
     }
     else if(req.query.workerUid) rows=rows.filter(row=>row.worker_uid === req.query.workerUid);

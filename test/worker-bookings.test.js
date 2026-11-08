@@ -88,6 +88,7 @@ test('worker-specific bookings, conflicts, automatic assignment, assistant tools
   const reservations = require('../src/db/bookingsRepo');
   const shared = reservations.insertBooking({
     businessId: restaurant.id, customerName: 'Banquet guest', customerEmail: 'private@example.test',
+    customerPhone: '5551234567', notes: 'Window table',
     partySize: 12, startTime: '2030-11-06T18:00:00Z', endTime: '2030-11-06T20:00:00Z',
   });
   const restaurantRequest = uid => fetch(base + '/api/bookings?scope=mine', {
@@ -98,7 +99,9 @@ test('worker-specific bookings, conflicts, automatic assignment, assistant tools
   const [reservation] = await restaurantResponse.json();
   assert.equal(reservation.id, Number(shared));
   assert.equal(reservation.party_size, 12);
-  assert.equal(reservation.customer_email, undefined);
+  assert.equal(reservation.customer_email, 'private@example.test');
+  assert.equal(reservation.customer_phone, '5551234567');
+  assert.equal(reservation.notes, 'Window table');
   assert.equal((await restaurantRequest('sam')).status, 403);
 
   // Calendar uncertainty is never confirmed and still blocks the interval.
