@@ -108,11 +108,15 @@ test('release security boundaries and resilient privacy cleanup',async()=>{
   });
   await test('clock records use server identity/time and tenant scope',async()=>{
    assert.equal((await req('/team/shop/me/clock','new','POST',{action:'in',uid:'manager'})).status,403);
-   const first=await (await req('/team/shop/me/clock','worker','POST',{action:'in',uid:'manager',clockIn:'1900'})).json();assert.ok(first.clockIn.startsWith(new Date().getUTCFullYear()+''));
-   await req('/team/shop/me/clock','worker','POST',{action:'in'});
+   assert.equal((await req('/team/shop/me/clock','worker','POST',{action:'in'})).status,409);
+   assert.equal((await req('/team/shop/me/clock/pin','worker','PUT',{pin:'123456'})).status,200);
+   assert.equal((await req('/team/shop/me/clock','worker','POST',{action:'in',pin:'654321'})).status,403);
+   const first=await (await req('/team/shop/me/clock','worker','POST',{action:'in',pin:'123456',uid:'manager',clockIn:'1900'})).json();assert.ok(first.clockIn.startsWith(new Date().getUTCFullYear()+''));
+   await req('/team/shop/me/clock','worker','POST',{action:'in',pin:'123456'});
    assert.equal(db.prepare("SELECT count(*) AS n FROM clock_sessions WHERE uid='worker'").get().n,1);
    assert.equal((await req('/team/other/me/clock','worker')).status,403);
-   await req('/team/shop/me/clock','worker','POST',{action:'out'});
+   assert.equal((await req('/team/shop/me/clock','worker','POST',{action:'out'})).status,403);
+   assert.equal((await req('/team/shop/me/clock','worker','POST',{action:'out',pin:'123456'})).status,200);
    assert.equal((await (await req('/team/shop/me/clock','worker')).json()).clockIn,null);
   });
   await test('weekly hours are manager-only and clip shifts at Toronto week boundaries',async()=>{

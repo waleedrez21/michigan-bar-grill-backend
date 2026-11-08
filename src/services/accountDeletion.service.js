@@ -43,7 +43,7 @@ async function perform(uid){
  }
  db.transaction(()=>{
   db.prepare("DELETE FROM booking_notifications WHERE recipient IN ('worker','worker_push') AND booking_id IN (SELECT id FROM bookings WHERE worker_uid=?)").run(uid);
-  for(const table of ['user_profiles','business_members','worker_availability','push_tokens','join_requests'])db.prepare(`DELETE FROM ${table} WHERE uid=?`).run(uid);
+  for(const table of ['user_profiles','business_members','worker_availability','push_tokens','join_requests','clock_pins'])db.prepare(`DELETE FROM ${table} WHERE uid=?`).run(uid);
   db.prepare('DELETE FROM chat_sessions WHERE owner_uid=?').run(uid);
   db.prepare('DELETE FROM clock_sessions WHERE uid=?').run(uid);
   db.prepare('UPDATE bookings SET worker_uid=NULL,worker_name=NULL WHERE worker_uid=?').run(uid);
