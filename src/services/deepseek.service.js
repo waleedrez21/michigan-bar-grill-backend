@@ -188,7 +188,7 @@ async function runTool(name, input, business) {
 
     // Mirrored into SQLite too — this is what the owner's app reads via
     // GET /api/bookings, scoped to this business by their API key.
-    bookingsRepo.insertBooking({
+    const bookingId = bookingsRepo.insertBooking({
       businessId: business.id,
       googleEventId: event.id,
       customerName: input.customerName,
@@ -201,7 +201,7 @@ async function runTool(name, input, business) {
       source: "agent",
     });
 
-    return { success: true, eventId: event.id, htmlLink: event.htmlLink };
+    return { success: true, bookingId: Number(bookingId), startDateTime: input.startDateTime, eventId: event.id, htmlLink: event.htmlLink };
   }
 
   if (name === "add_to_cart") {
@@ -255,6 +255,7 @@ async function chat(business, history, userMessage) {
       return { history: historyToSave, reply: msg.content || "", cartActions };
     }
 
+    let banquetReply;
     for (const toolCall of msg.tool_calls) {
       let result;
       try {
@@ -267,7 +268,7 @@ async function chat(business, history, userMessage) {
         console.error('[deepseek] Tool action failed');
         result = {
           success: false,
-          error: "That action couldn't be completed due to a technical issue. Apologize to the customer and suggest calling the restaurant directly instead.",
+          error: "That action couldn't be completed. Please call the restaurant directly.",
         };
       }
       messages.push({
@@ -275,6 +276,16 @@ async function chat(business, history, userMessage) {
         tool_call_id: toolCall.id,
         content: JSON.stringify(result),
       });
+      // Give banquet customers a reference from the saved WorkBay row.
+      if (toolCall.function.name === "create_booking" && !workerBookings.staffBusiness(business)) {
+        banquetReply = result.success && result.bookingId
+          ? `Your banquet reservation is booked. WorkBay reference #${result.bookingId}. Please contact the restaurant for catering and deposit details.`
+          : `Your banquet reservation was not confirmed. ${result.error || "Please call the restaurant to check availability."}`;
+      }
+    }
+    if (banquetReply) {
+      const history = [...messages.slice(1), { role: "assistant", content: banquetReply }];
+      return { history, reply: banquetReply, cartActions };
     }
   }
 
